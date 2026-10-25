@@ -19,7 +19,7 @@
 
 适用于 Minecraft **1.20.1 / Forge**，服务端和客户端均需安装，需要 MariaDB。
 
-玩家使用 `/mt` 打开菜单；快捷键默认未绑定。管理员使用网页管理台，也可通过指令管理。可独立运行，或接入 PixelMC Manager。
+玩家使用 `/mt` 打开菜单；快捷键默认未绑定。未佩戴称号会定时提醒，可用 `/mt reminder off` 永久关闭，`/mt reminder on` 重新开启。管理员使用网页管理台，也可通过指令管理。可独立运行，或接入 PixelMC Manager。
 
 ## English
 
@@ -38,7 +38,7 @@ Collect memorable player titles and display them above names, in chat, and in th
 
 For Minecraft **1.20.1 / Forge**. Install on both the server and clients; MariaDB is required.
 
-Players open the menu with `/mt`; the optional keybind is unbound by default. Administrators use the web console or commands. Run it independently or connect it to PixelMC Manager.
+Players open the menu with `/mt`; the optional keybind is unbound by default. Unequipped-title reminders can be permanently disabled with `/mt reminder off` and re-enabled with `/mt reminder on`. Administrators use the web console or commands. Run it independently or connect it to PixelMC Manager.
 
 ---
 

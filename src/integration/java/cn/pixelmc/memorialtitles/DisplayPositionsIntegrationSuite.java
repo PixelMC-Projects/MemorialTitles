@@ -56,7 +56,7 @@ public final class DisplayPositionsIntegrationSuite {
       db.transaction(tx -> { tx.sql("INSERT INTO mt_players VALUES(?,?,?,?)", alice.toString(), "Alice", 1234L, 5678L); return null; });
       try (var c = db.open()) {
         Database.execute(c, "DROP TABLE mt_display_preferences");
-        Database.execute(c, "DELETE FROM mt_schema WHERE version=5");
+        Database.execute(c, "DELETE FROM mt_schema WHERE version>=5");
       }
       db.migrate();
       Snapshot migrated = db.read();
@@ -128,7 +128,7 @@ public final class DisplayPositionsIntegrationSuite {
         preferences(s, bob, new DisplayPreferences(true, false, true));
         check(await(s.notifications(alice)).size() == notices, "position changes produce no fake title acquisition or removal notices");
         Backup.Archive archive = await(s.export(ADMIN));
-        check(archive.format() == 3 && archive.displayPreferences().size() == 2, "backup format 3 includes non-default player preferences");
+        check(archive.format() == 4 && archive.displayPreferences().size() == 2, "backup format 4 includes non-default player preferences");
         Path backup = Backup.write(Path.of("build/position-tests", name), archive);
         Backup.Archive read = Backup.read(backup);
         try (TitleService restored = new TitleService(new Database(new Database.Config(base + names.get(1), "root", password)))) {
@@ -166,7 +166,7 @@ public final class DisplayPositionsIntegrationSuite {
         deny(s.migrateIdentity(ADMIN, from, to), "identity migration refuses to overwrite target display preferences");
         Map<String, Object> report = new LinkedHashMap<>();
         report.put("checks", checks); report.put("passed", checks.size()); report.put("matrixCombinations", 64);
-        report.put("schema", 5); report.put("backupFormat", 3); report.put("productionModified", false);
+        report.put("schema", 6); report.put("backupFormat", 4); report.put("productionModified", false);
         Files.createDirectories(Path.of("build/reports"));
         Files.writeString(Path.of("build/reports/display-positions.json"), JSON.toJson(report));
       }

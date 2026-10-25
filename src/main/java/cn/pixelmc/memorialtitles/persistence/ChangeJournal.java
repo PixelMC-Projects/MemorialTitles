@@ -59,7 +59,7 @@ public final class ChangeJournal {
         }
       };
   private static final Set<String> ELIGIBLE =
-      Set.of("TITLE_SAVE", "GRANT", "REVOKE", "EQUIP", "PRIVACY", "DISPLAY_POSITION", "SETTINGS", "RELOAD");
+      Set.of("TITLE_SAVE", "GRANT", "REVOKE", "EQUIP", "PRIVACY", "DISPLAY_POSITION", "REMINDER", "SETTINGS", "RELOAD");
   private static final Map<String, String> LABELS =
       Map.ofEntries(
           Map.entry("name", "称号文字与样式"),
@@ -75,6 +75,7 @@ public final class ChangeJournal {
           Map.entry("head", "头顶展示"),
           Map.entry("chat", "聊天展示"),
           Map.entry("tab", "TAB 展示"),
+          Map.entry("reminder", "未佩戴称号提醒"),
           Map.entry("headScale", "头顶缩放"),
           Map.entry("headOffset", "头顶间距"),
           Map.entry("chatPrefix", "聊天格式"),
@@ -133,6 +134,10 @@ public final class ChangeJournal {
         add(out, "D|" + id + "|" + position.name().toLowerCase(Locale.ROOT),
             a.players().containsKey(id) ? a.displayPreferences(id).enabled(position) : null,
             b.players().containsKey(id) ? b.displayPreferences(id).enabled(position) : null);
+    for (UUID id : union(a.players().keySet(), b.players().keySet()))
+      add(out, "D|" + id + "|reminder",
+          a.players().containsKey(id) ? a.displayPreferences(id).reminderEnabled() : null,
+          b.players().containsKey(id) ? b.displayPreferences(id).reminderEnabled() : null);
     for (Key k : union(a.owned().keySet(), b.owned().keySet())) {
       Owned x = a.owned().get(k), y = b.owned().get(k);
       if (x == null || y == null || x.acquiredAt() != y.acquiredAt()) add(out, own(k), x, y);
@@ -261,7 +266,7 @@ public final class ChangeJournal {
           && ((a.title().equals(p[1]) && a.action().equals("TITLE_SAVE"))
               || a.action().equals("RELOAD"))) return a;
       if (p[0].equals("S") && Set.of("SETTINGS", "RELOAD").contains(a.action())) return a;
-      if (p[0].equals("D") && a.target().equals(p[1]) && a.action().equals("DISPLAY_POSITION")) return a;
+      if (p[0].equals("D") && a.target().equals(p[1]) && Set.of("DISPLAY_POSITION", "REMINDER").contains(a.action())) return a;
       if (Set.of("O", "R").contains(p[0])
           && a.target().equals(p[1])
           && a.title().equals(p[2])
@@ -274,7 +279,7 @@ public final class ChangeJournal {
   }
 
   private static String label(Audit a, List<Delta> ds) {
-    if (a.action().equals("DISPLAY_POSITION") && ds.size() == 1)
+    if (Set.of("DISPLAY_POSITION", "REMINDER").contains(a.action()) && ds.size() == 1)
       return "个人" + LABELS.getOrDefault(ds.get(0).key().split("\\|")[2], "显示位置");
     if (ds.size() == 1) {
       String[] p = ds.get(0).key().split("\\|");
@@ -416,7 +421,8 @@ public final class ChangeJournal {
       case "D" -> {
         UUID id = UUID.fromString(p[1]);
         yield s.players().containsKey(id)
-            ? json(s.displayPreferences(id).enabled(DisplayPosition.valueOf(p[2].toUpperCase(Locale.ROOT))))
+            ? json(p[2].equals("reminder") ? s.displayPreferences(id).reminderEnabled()
+                : s.displayPreferences(id).enabled(DisplayPosition.valueOf(p[2].toUpperCase(Locale.ROOT))))
             : JsonNull.INSTANCE;
       }
       case "O" -> {
@@ -477,8 +483,9 @@ public final class ChangeJournal {
           if (v.isJsonNull()) preferences.remove(id);
           else {
             if (!ps.containsKey(id)) throw new IllegalStateException("相关玩家档案已不存在，不能恢复显示位置");
-            preferences.put(id, preferences.getOrDefault(id, DisplayPreferences.defaults()).with(
-                DisplayPosition.valueOf(p[2].toUpperCase(Locale.ROOT)), v.getAsBoolean()));
+            DisplayPreferences before = preferences.getOrDefault(id, DisplayPreferences.defaults());
+            preferences.put(id, p[2].equals("reminder") ? before.withReminderEnabled(v.getAsBoolean())
+                : before.with(DisplayPosition.valueOf(p[2].toUpperCase(Locale.ROOT)), v.getAsBoolean()));
           }
         }
         case "O" -> {

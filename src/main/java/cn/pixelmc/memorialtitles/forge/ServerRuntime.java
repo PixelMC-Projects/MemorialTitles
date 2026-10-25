@@ -29,6 +29,7 @@ public final class ServerRuntime {
   private boolean refreshing, backingUp;
   private final TabAdapter tab = new TabAdapter();
   private long nextTab;
+  private long nextReminderCheck = System.nanoTime();
   private final Map<UUID, String> pendingLogins = new HashMap<>();
   private static final long JOIN_NOTIFICATION_DELAY = TimeUnit.SECONDS.toNanos(10);
   private final Map<UUID, NotificationSession> notificationSessions = new HashMap<>();
@@ -38,9 +39,11 @@ public final class ServerRuntime {
     final long readyAfter;
     long pollAfter;
     boolean polling;
+    final UnequippedTitleReminder reminder;
 
     NotificationSession(ServerPlayer player, long now) {
       this.player = player;
+      reminder = new UnequippedTitleReminder(now);
       readyAfter = now + JOIN_NOTIFICATION_DELAY;
       pollAfter = readyAfter;
     }
@@ -226,7 +229,9 @@ public final class ServerRuntime {
   public void tick(TickEvent.ServerTickEvent e) {
     if (e.phase != TickEvent.Phase.END || server == null || service == null) return;
     long now = System.currentTimeMillis();
-    pollNotifications(System.nanoTime());
+    long monotonicNow = System.nanoTime();
+    pollNotifications(monotonicNow);
+    remindUnequipped(monotonicNow);
     if (now >= nextTab) {
       nextTab = now + 1000;
       tab.update(this);
@@ -302,6 +307,22 @@ public final class ServerRuntime {
                 finishNotificationPoll(session, ackError == null ? 1 : 30);
             }));
       }));
+    }
+  }
+
+  private void remindUnequipped(long now) {
+    if (now - nextReminderCheck < 0) return;
+    nextReminderCheck = now + TimeUnit.SECONDS.toNanos(1);
+    if (!service.healthy()) return;
+    Snapshot snapshot = service.snapshot();
+    for (var entry : notificationSessions.entrySet()) {
+      UUID id = entry.getKey();
+      NotificationSession session = entry.getValue();
+      // Admission and the persisted player preferences must be confirmed before any reminder.
+      if (!currentSession(id, session) || pendingLogins.containsKey(id)
+          || !snapshot.players().containsKey(id) || !session.reminder.claim(now)) continue;
+      if (UnequippedTitleReminder.shouldRemind(snapshot, id))
+        session.player.sendSystemMessage(Text.unequippedReminder());
     }
   }
 

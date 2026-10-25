@@ -46,7 +46,7 @@ public final class Backup {
     List<Audit> history = tx.history(1000000, true);
     if (history.size() == 1000000) throw new IOException("审计超过导出安全上限，请使用数据库原生备份，禁止静默截断");
     return new Archive(
-        3,
+        4,
         System.currentTimeMillis(),
         List.copyOf(s.titles().values()),
         List.copyOf(s.players().values()),
@@ -61,7 +61,7 @@ public final class Backup {
   }
 
   public static void validate(Archive a) {
-    if (a == null || a.format < 1 || a.format > 3)
+    if (a == null || a.format < 1 || a.format > 4)
       throw new IllegalArgumentException("不支持的导出格式");
     Objects.requireNonNull(a.settings);
     Set<String> ts = new HashSet<>();

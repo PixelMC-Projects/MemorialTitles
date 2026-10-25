@@ -257,16 +257,22 @@ public final class Model {
 
   public enum DisplayPosition { HEAD, CHAT, TAB }
 
-  public record DisplayPreferences(boolean head, boolean chat, boolean tab) {
+  public record DisplayPreferences(boolean head, boolean chat, boolean tab, boolean reminderDisabled) {
+    // A missing field in old snapshots/backups decodes to false: reminders stay enabled.
+    public DisplayPreferences(boolean head, boolean chat, boolean tab) { this(head, chat, tab, false); }
     public static DisplayPreferences defaults() { return new DisplayPreferences(true, true, true); }
+    public boolean reminderEnabled() { return !reminderDisabled; }
+    public DisplayPreferences withReminderEnabled(boolean value) {
+      return new DisplayPreferences(head, chat, tab, !value);
+    }
     public boolean enabled(DisplayPosition position) {
       return switch (position) { case HEAD -> head; case CHAT -> chat; case TAB -> tab; };
     }
     public DisplayPreferences with(DisplayPosition position, boolean value) {
       return switch (position) {
-        case HEAD -> new DisplayPreferences(value, chat, tab);
-        case CHAT -> new DisplayPreferences(head, value, tab);
-        case TAB -> new DisplayPreferences(head, chat, value);
+        case HEAD -> new DisplayPreferences(value, chat, tab, reminderDisabled);
+        case CHAT -> new DisplayPreferences(head, value, tab, reminderDisabled);
+        case TAB -> new DisplayPreferences(head, chat, value, reminderDisabled);
       };
     }
   }
@@ -304,6 +310,12 @@ public final class Model {
 
     public Owned ownership(UUID p, String t) {
       return owned.get(new Key(p, t));
+    }
+
+    /** Wearing is independent of collection privacy and every display visibility switch. */
+    public boolean hasEquippedTitle(UUID player) {
+      String id = equipped.get(player);
+      return id != null && titles.containsKey(id) && ownership(player, id) != null;
     }
 
     public Title worn(UUID player) {

@@ -61,6 +61,18 @@ public final class Commands {
                   return 1;
                 });
     root.then(
+        literal("reminder")
+            .requires(source -> source.getPlayer() != null)
+            .executes(c -> {
+              var player = c.getSource().getPlayerOrException();
+              boolean enabled = runtime().service.snapshot().displayPreferences(player.getUUID()).reminderEnabled();
+              c.getSource().sendSuccess(() -> Component.literal("未佩戴称号提醒：" + (enabled ? "已开启" : "已永久关闭")
+                  + "。使用 /mt reminder " + (enabled ? "off 关闭。" : "on 重新开启。")), false);
+              return 1;
+            })
+            .then(literal("off").executes(c -> reminder(c.getSource(), false)))
+            .then(literal("on").executes(c -> reminder(c.getSource(), true))));
+    root.then(
         literal("catalogue")
             .executes(
                 c -> {
@@ -536,6 +548,12 @@ public final class Commands {
                                                                 .service
                                                                 .restoreEmpty(
                                                                     who(c.getSource()), a))))))));
+  }
+
+  private static int reminder(CommandSourceStack source, boolean enabled) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+    var player = source.getPlayerOrException();
+    return queue(source, runtime().service.setUnequippedReminder(player.getUUID(), enabled)
+        .thenApply(ignored -> enabled ? "未佩戴称号提醒已重新开启" : "已永久关闭未佩戴称号提醒，可用 /mt reminder on 重新开启"));
   }
 
   private static RequiredArgumentBuilder<CommandSourceStack, String> titleArg() {

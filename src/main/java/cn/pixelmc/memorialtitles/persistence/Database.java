@@ -52,7 +52,7 @@ public final class Database {
             ResultSet r = s.executeQuery("SELECT MAX(version) FROM mt_schema")) {
           if (r.next()) current = r.getInt(1);
         }
-        if (current > 5) throw new SQLException("Database schema is newer than this mod");
+        if (current > 6) throw new SQLException("Database schema is newer than this mod");
         if (current == 0) {
           String[] ddl = {
             "CREATE TABLE IF NOT EXISTS mt_state (id INT PRIMARY KEY, settings LONGTEXT NOT NULL)"
@@ -155,6 +155,11 @@ public final class Database {
                   + " DEFAULT TRUE, tab BOOLEAN NOT NULL DEFAULT TRUE, FOREIGN KEY(player)"
                   + " REFERENCES mt_players(uuid) ON DELETE CASCADE) ENGINE=InnoDB");
           execute(c, "INSERT IGNORE INTO mt_schema(version) VALUES(5)");
+        }
+        if (current < 6) {
+          execute(c, "ALTER TABLE mt_display_preferences ADD COLUMN IF NOT EXISTS"
+              + " reminder_disabled BOOLEAN NOT NULL DEFAULT FALSE");
+          execute(c, "INSERT IGNORE INTO mt_schema(version) VALUES(6)");
         }
       } finally {
         execute(c, "SELECT RELEASE_LOCK('memorialtitles_schema_v1')");
@@ -397,9 +402,9 @@ public final class Database {
       }
       Settings settings;
       try (Statement s = connection.createStatement();
-          ResultSet r = s.executeQuery("SELECT player,head,chat,tab FROM mt_display_preferences")) {
+          ResultSet r = s.executeQuery("SELECT player,head,chat,tab,reminder_disabled FROM mt_display_preferences")) {
         while (r.next()) displayPreferences.put(UUID.fromString(r.getString(1)),
-            new DisplayPreferences(r.getBoolean(2), r.getBoolean(3), r.getBoolean(4)));
+            new DisplayPreferences(r.getBoolean(2), r.getBoolean(3), r.getBoolean(4), r.getBoolean(5)));
       }
       try (Statement s = connection.createStatement();
           ResultSet r = s.executeQuery("SELECT settings FROM mt_state WHERE id=1")) {
@@ -414,9 +419,10 @@ public final class Database {
         sql("DELETE FROM mt_display_preferences WHERE player=?", player.toString());
         return;
       }
-      sql("INSERT INTO mt_display_preferences(player,head,chat,tab) VALUES(?,?,?,?)"
-          + " ON DUPLICATE KEY UPDATE head=VALUES(head),chat=VALUES(chat),tab=VALUES(tab)",
-          player.toString(), preferences.head(), preferences.chat(), preferences.tab());
+      sql("INSERT INTO mt_display_preferences(player,head,chat,tab,reminder_disabled) VALUES(?,?,?,?,?)"
+          + " ON DUPLICATE KEY UPDATE head=VALUES(head),chat=VALUES(chat),tab=VALUES(tab),"
+          + "reminder_disabled=VALUES(reminder_disabled)",
+          player.toString(), preferences.head(), preferences.chat(), preferences.tab(), preferences.reminderDisabled());
     }
 
     public void title(Title t) throws SQLException {

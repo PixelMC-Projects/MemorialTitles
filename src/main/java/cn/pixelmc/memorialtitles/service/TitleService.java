@@ -416,6 +416,20 @@ public final class TitleService implements AutoCloseable {
     });
   }
 
+  /** Only the authenticated player's command may supply this UUID. */
+  public CompletableFuture<Void> setUnequippedReminder(UUID player, boolean enabled) {
+    if (remote != null) return remoteCall("setUnequippedReminder", Void.class, player, enabled);
+    return write(tx -> {
+      Snapshot s = tx.snapshot();
+      known(s, player);
+      DisplayPreferences before = s.displayPreferences(player);
+      if (before.reminderEnabled() == enabled) return null;
+      tx.displayPreferences(player, before.withReminderEnabled(enabled));
+      tx.audit(player.toString(), "REMINDER", player.toString(), "", "enabled=" + enabled);
+      return null;
+    });
+  }
+
   public CompletableFuture<Void> settings(Actor actor, Settings settings) {
     if(remote!=null)return remoteCall("settings", Void.class, actor, settings);
 
