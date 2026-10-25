@@ -1,0 +1,220 @@
+buildscript {
+    repositories {
+        maven { url = 'https://maven.aliyun.com/repository/public' }
+        maven { url = 'https://maven.minecraftforge.net/' }
+        mavenCentral()
+    }
+    dependencies { classpath 'net.minecraftforge.gradle:ForgeGradle:6.0.54' }
+}
+apply plugin: 'net.minecraftforge.gradle'
+version = '0.4.0-dev'
+group = 'cn.pixelmc.memorialtitles'
+base { archivesName = 'memorialtitles-forge-1.20.1' }
+java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
+sourceSets {
+    integration {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+    visual {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+    positionsRuntime {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+minecraft {
+    mappings channel: 'official', version: '1.20.1'
+    copyIdeResources = true
+    runs {
+        configureEach {
+            workingDirectory project.file('run')
+            property 'forge.logging.console.level', 'info'
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+            mods { memorialtitles { source sourceSets.main } }
+        }
+        client {}
+        visualClient {
+            parent minecraft.runs.client
+            client true
+            workingDirectory project.file('run-client')
+            mods { memorialtitles { source sourceSets.visual } }
+            args '--username', 'MTTester', '--width', '1280', '--height', '800'
+            if (project.hasProperty('gallery')) property 'mt.gallery', 'true'
+            if (project.hasProperty('webRuntime')) property 'mt.webRuntime', 'true'
+        }
+        server { args '--nogui' }
+        displayLocationsServer {
+            client false
+            workingDirectory project.file('run-display-locations')
+        }
+        smokeServer {
+            parent minecraft.runs.server
+            mods { memorialtitles { source sourceSets.visual } }
+            if (project.hasProperty('gallery')) {
+                workingDirectory project.file('run-gallery')
+                property 'mt.gallery', 'true'
+            }
+        }
+    }
+}
+// ForgeGradle supplies the conventional server launch late; merge that finalized parent.
+afterEvaluate {
+    minecraft.runs.displayLocationsServer.merge(minecraft.runs.server, true)
+    minecraft.runs.displayLocationsServer.workingDirectory project.file('run-display-locations')
+    minecraft.runs.displayLocationsServer.mods { memorialtitles { source sourceSets.positionsRuntime } }
+}
+repositories {
+    flatDir { dirs 'references' }
+    maven { name = 'AliyunPublic'; url = 'https://maven.aliyun.com/repository/public' }
+    maven { name = 'BMCLAPIForge'; url = 'https://bmclapi2.bangbang93.com/maven' }
+}
+repositories.configureEach { repo ->
+    if (repo instanceof MavenArtifactRepository) {
+        if (repo.url.host in ['maven.minecraftforge.net', 'libraries.minecraft.net']) repo.url = 'https://bmclapi2.bangbang93.com/maven'
+        if (repo.url.host in ['repo.maven.apache.org', 'repo1.maven.org']) repo.url = 'https://maven.aliyun.com/repository/public'
+    }
+}
+configurations {
+    jdbcDriver
+    compileOnly.extendsFrom jdbcDriver
+}
+
+dependencies {
+    jdbcDriver('org.mariadb.jdbc:mariadb-java-client:3.5.6') { transitive = false }
+    minecraft 'net.minecraftforge:forge:1.20.1-47.3.33'
+    if (project.hasProperty('compatRuntime')) {
+        runtimeOnly fg.deobf('reference:tab-forge:5.2.1')
+        runtimeOnly fg.deobf('reference:curtain-mc1.20.1:1.3.2')
+    }
+}
+tasks.register('unpackJdbc', Sync) {
+    from { configurations.jdbcDriver.collect { zipTree(it) } }
+    into layout.buildDirectory.dir('generated/jdbc')
+    exclude 'META-INF/MANIFEST.MF', 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA', 'module-info.class', 'META-INF/versions/**'
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/jdbc')
+tasks.named('processResources').configure { dependsOn 'unpackJdbc' }
+
+tasks.register('installAdminWeb', Exec) {
+    workingDir file('web-console')
+    commandLine(System.getProperty('os.name').toLowerCase().contains('windows') ? 'npm.cmd' : 'npm', 'ci', '--prefer-offline', '--no-audit', '--no-fund')
+    inputs.files('web-console/package.json','web-console/package-lock.json')
+    outputs.file('web-console/node_modules/.package-lock.json')
+}
+tasks.register('buildAdminWeb', Exec) {
+    dependsOn 'installAdminWeb'
+    workingDir file('web-console')
+    commandLine(System.getProperty('os.name').toLowerCase().contains('windows') ? 'npm.cmd' : 'npm', 'run', 'build')
+    inputs.files(fileTree('web-console/src'),fileTree('web-console/public'),'web-console/index.html','web-console/vite.config.mjs','web-console/package-lock.json')
+    outputs.dir('web-console/dist/client')
+}
+tasks.register('syncAdminWeb', Sync) {
+    dependsOn 'buildAdminWeb'
+    from 'web-console/dist/client'
+    into layout.buildDirectory.dir('generated/admin-web/web')
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/admin-web')
+tasks.named('processResources').configure { dependsOn 'syncAdminWeb' }
+tasks.named('jar', Jar).configure {
+    from({ configurations.jdbcDriver.collect { zipTree(it) } }) {
+        exclude 'META-INF/MANIFEST.MF', 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA', 'module-info.class', 'META-INF/versions/**'
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes(['Implementation-Version': project.version]) }
+    finalizedBy 'reobfJar'
+}
+tasks.register('integrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.IntegrationSuite'
+    if (project.hasProperty('testDb')) systemProperty 'mt.testDb', project.property('testDb')
+    if (project.hasProperty('testPassword')) systemProperty 'mt.testPassword', project.property('testPassword')
+}
+tasks.register('webIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.WebIntegrationSuite'
+}
+tasks.register('avatarIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.web.AvatarIntegrationSuite'
+}
+
+tasks.register('undoIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.UndoIntegrationSuite'
+}
+
+tasks.register('notificationIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.NotificationIntegrationSuite'
+}
+
+tasks.register('historyCollationIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.HistoryCollationIntegrationSuite'
+}
+
+tasks.register('titleDeletionIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.TitleDeletionIntegrationSuite'
+}
+tasks.register('displayPositionsIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.DisplayPositionsIntegrationSuite'
+}
+
+tasks.register('titleHoldersIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.TitleHoldersIntegrationSuite'
+}
+
+tasks.register('prepareDisplayPositionsRuntime', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.DisplayPositionsRuntimeFixture'
+}
+
+tasks.register('cleanDisplayPositionsRuntimeDatabase', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.DisplayPositionsRuntimeFixture'
+    args 'cleanup'
+}
+tasks.register('runWebAcceptance', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.WebAcceptanceHarness'
+}
+tasks.register('prepareWebRuntime', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.WebRuntimeFixture'
+}
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8'; options.compilerArgs += ['-proc:none'] }
+tasks.withType(net.minecraftforge.gradle.common.tasks.DownloadAssets).configureEach {
+    assetRepository = 'https://bmclapi2.bangbang93.com/assets/'
+}
+
+// Preserve the project's license and original-author notice in every published JAR.
+tasks.withType(Jar).configureEach {
+    from(rootProject.file('LICENSE')) { into 'META-INF/pixelmc' }
+    from(rootProject.file('NOTICE')) { into 'META-INF/pixelmc' }
+    from(rootProject.file('LICENSE-EXCEPTION.md')) { into 'META-INF/pixelmc' }
+}
+
+tasks.named('processResources').configure {
+    inputs.property 'modVersion', project.version
+    filesMatching('META-INF/mods.toml') { expand(version: project.version) }
+}

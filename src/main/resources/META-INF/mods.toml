@@ -1,0 +1,21 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="AGPL-3.0-only"
+[[mods]]
+modId="memorialtitles"
+version="${version}"
+displayName="MemorialTitles 纪念称号"
+authors="PixelMC"
+description='''跨存档称号收藏、隐私与管理。需配置独立 MariaDB。'''
+[[dependencies.memorialtitles]]
+modId="forge"
+mandatory=true
+versionRange="[47.3.33,48)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.memorialtitles]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.20.1,1.20.2)"
+ordering="NONE"
+side="BOTH"
