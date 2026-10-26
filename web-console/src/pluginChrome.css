@@ -1,0 +1,31 @@
+/* Shared with Manager's approved plugin chrome; standalone authentication stays local. */
+.app { --table-heading-bg:#1e1e20; }
+.app[data-theme=light] { --table-heading-bg:#f5f5f7; }
+.app .table-heading,.app table thead th { background:var(--table-heading-bg); }
+.app .table-heading { height:39px; }
+.app .view-bar { flex-wrap:wrap; }
+.app .view-tabs { flex-wrap:wrap; row-gap:0; }
+.app .view-tabs button { display:inline-flex; align-items:center; gap:7px; padding:14px 1px; }
+.app .tab-count { font-size:10px; font-weight:400; color:var(--muted); font-variant-numeric:tabular-nums; }
+.app .history-action { display:flex; align-items:center; gap:10px; }
+.app .history-action>svg { color:var(--muted); flex-shrink:0; }
+.app .column-sort { display:inline-flex; align-items:center; gap:7px; padding:0; min-height:32px; border:0; font-size:11px; color:inherit; background:transparent; white-space:nowrap; }
+.app .column-sort>svg { color:var(--muted); opacity:.45; }
+.app .column-sort[aria-pressed=true] { color:var(--secondary); }
+.app .column-sort[aria-pressed=true]>svg { color:var(--accent); opacity:1; }
+.app .title-line { display:flex; align-items:center; gap:17px; }
+.app .server-name { color:var(--muted); font-size:11px; padding-left:17px; border-left:1px solid var(--border); font-weight:400; }
+.app .settings-content { width:100%; max-width:none; }
+.app .settings-content>.settings-database-card { margin:0; max-width:none; }
+.app .editor.wide-editor { width:590px; }
+.app .player-identity .status-dot { width:5px; height:5px; }
+.app,.app * { scrollbar-width:auto; scrollbar-color:auto; }
+.app::-webkit-scrollbar,.app *::-webkit-scrollbar { width:6px; height:6px; }
+.app::-webkit-scrollbar-track,.app *::-webkit-scrollbar-track { background:transparent; }
+.app::-webkit-scrollbar-thumb,.app *::-webkit-scrollbar-thumb { background:var(--border); border-radius:6px; }
+.app *::-webkit-scrollbar-thumb:hover { background:var(--muted); }
+.app::-webkit-scrollbar-button,.app *::-webkit-scrollbar-button { display:none; width:0; height:0; }
+.app *::-webkit-scrollbar-corner { background:transparent; }
+@supports not selector(::-webkit-scrollbar) { .app,.app * { scrollbar-width:thin; scrollbar-color:var(--border) transparent; } }
+@media(max-width:760px) { .app .editor.wide-editor { width:530px; } .app .title-line { gap:12px; } .app .server-name { padding-left:12px; font-size:10px; } .app .view-tabs { gap:20px; } }
+@media(max-width:540px) { .app .editor.wide-editor { width:100%; } .app .title-line { gap:9px; } .app .server-name { padding-left:9px; font-size:9px; } }

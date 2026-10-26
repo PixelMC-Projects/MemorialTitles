@@ -18,7 +18,7 @@ export async function download(path, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export const qs = values => '?' + new URLSearchParams(Object.entries(values).filter(([, value]) => value !== '' && value !== undefined));
-export const time = value => value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(new Date(value)) : '—';
+export const time = value => value ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(new Date(value)) : '—';
 export const textOf = title => title?.name?.segments?.map(s => s.text).join('') || '';
 export const creationDate = value => value ? new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value)) : '创建日期未记录';
 export const pinyin = new Intl.Collator('zh-CN-u-co-pinyin',{sensitivity:'base',numeric:true});

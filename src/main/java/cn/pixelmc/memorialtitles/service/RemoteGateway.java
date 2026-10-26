@@ -16,7 +16,7 @@ public final class RemoteGateway {
       return response.thenApply(value->JsonParser.parseString(value).getAsJsonObject());
     }catch(Throwable e){return CompletableFuture.failedFuture(new IllegalStateException("Manager桥接不可用；请安装并配置PixelMC Manager",e));}
   }
-  public static void register(){try{Class.forName("com.pixelmc.pixelmcmanager.api.ManagerBridgeApi").getMethod("register",String.class,String.class,String.class,String.class).invoke(null,"memorialtitles","MemorialTitles","0.4.1-dev","称号档案,玩家收藏,首登奖励,操作记录");}catch(ReflectiveOperationException ignored){}}
+  public static void register(){try{Class.forName("com.pixelmc.pixelmcmanager.api.ManagerBridgeApi").getMethod("register",String.class,String.class,String.class,String.class).invoke(null,"memorialtitles","MemorialTitles","0.4.2-dev","称号档案,玩家收藏,首登奖励,操作记录");}catch(ReflectiveOperationException ignored){}}
   public static String publicUrl(){try{return (String)Class.forName("com.pixelmc.pixelmcmanager.api.ManagerBridgeApi").getMethod("publicUrl").invoke(null);}catch(ReflectiveOperationException e){return "";}}
   public static boolean admitted(java.util.UUID id){try{return (boolean)Class.forName("com.pixelmc.pixelmcmanager.api.ManagerBridgeApi").getMethod("admitted",java.util.UUID.class).invoke(null,id);}catch(ReflectiveOperationException e){return false;}}
 }

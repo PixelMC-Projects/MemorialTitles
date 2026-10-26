@@ -5,6 +5,7 @@ import "./styles.css";
 import "@fontsource-variable/inter";
 import "./console.css";
 import "./review.css";
+import "./pluginChrome.css";
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>

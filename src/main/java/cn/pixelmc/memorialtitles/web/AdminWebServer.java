@@ -393,20 +393,34 @@ public final class AdminWebServer implements AutoCloseable {
     if (path.equals("/api/players") && !post) {
       String search = q.getOrDefault("q", "").toLowerCase(Locale.ROOT);
       if (search.length() > 128) throw new IllegalArgumentException("搜索文字过长");
+      String presence = q.getOrDefault("presence", q.getOrDefault("online", "false").equals("true") ? "online" : "all");
+      String sort = q.getOrDefault("sort", "status"), direction = q.getOrDefault("direction", "asc");
+      if (!Set.of("all", "online", "offline").contains(presence)
+          || !Set.of("status", "name", "ownedCount", "equipped", "lastSeen").contains(sort)
+          || !Set.of("asc", "desc").contains(direction))
+        throw new IllegalArgumentException("玩家分类或排序无效");
       Set<UUID> online = host.online();
       Map<UUID, Long> counts = new HashMap<>();
       s.owned().values().forEach(o -> counts.merge(o.player(), 1L, Long::sum));
       var collator = java.text.Collator.getInstance(Locale.CHINA);
       collator.setStrength(java.text.Collator.PRIMARY);
+      Comparator<PlayerRow> byName = (a, b) -> compareNames(a.name(), b.name(), collator);
+      byName = byName.thenComparing(PlayerRow::name).thenComparing(PlayerRow::id);
+      boolean descending = direction.equals("desc");
+      Comparator<PlayerRow> order = switch (sort) {
+        case "name" -> (a, b) -> compareNames(a.name(), b.name(), collator) * (descending ? -1 : 1);
+        case "ownedCount" -> Comparator.comparingLong(PlayerRow::ownedCount);
+        case "lastSeen" -> (a, b) -> compareOptional(a.lastSeen() <= 0 ? null : a.lastSeen(), b.lastSeen() <= 0 ? null : b.lastSeen(), descending);
+        case "equipped" -> (a, b) -> compareTitleNames(s.titles().get(a.equipped()), s.titles().get(b.equipped()), collator, descending);
+        default -> Comparator.comparing(PlayerRow::online).reversed();
+      };
+      if (descending && (sort.equals("ownedCount") || sort.equals("status"))) order = order.reversed();
+      order = order.thenComparing(byName);
+      long onlineCount = s.players().keySet().stream().filter(online::contains).count();
       List<PlayerRow> all =
           s.players().values().stream()
               .filter(p -> (p.name() + p.id()).toLowerCase(Locale.ROOT).contains(search))
-              .filter(
-                  p -> !q.getOrDefault("online", "false").equals("true") || online.contains(p.id()))
-              .sorted(
-                  Comparator.<Profile, Boolean>comparing(p -> !online.contains(p.id()))
-                      .thenComparing(Profile::name, collator)
-                      .thenComparing(Profile::id))
+              .filter(p -> presence.equals("all") || online.contains(p.id()) == presence.equals("online"))
               .map(
                   p ->
                       new PlayerRow(
@@ -419,6 +433,7 @@ public final class AdminWebServer implements AutoCloseable {
                           online.contains(p.id()),
                           s.admins().contains(p.id()),
                           avatars.version(p.id())))
+              .sorted(order)
               .toList();
       int size = integer(q, "size", 20, 1, 100),
           page = Math.min(integer(q, "page", 0, 0, 100000), Math.max(0, (all.size() - 1) / size));
@@ -433,7 +448,9 @@ public final class AdminWebServer implements AutoCloseable {
               "page",
               page,
               "size",
-              size));
+              size,
+              "presenceCounts",
+              Map.of("all", s.players().size(), "online", onlineCount, "offline", s.players().size() - onlineCount)));
       return;
     }
     if (path.equals("/api/player-delete/preview") && post) {
@@ -675,7 +692,35 @@ public final class AdminWebServer implements AutoCloseable {
         "online",
         host.online().size(),
         "version",
-        "0.4.0-dev");
+        "0.4.2-dev");
+  }
+
+  // Match the web console's pinyin/letter ordering, including natural numeric names.
+  private static int compareNames(String a, String b, java.text.Collator collator) {
+    int i = 0, j = 0;
+    while (i < a.length() && j < b.length()) {
+      boolean digits = Character.isDigit(a.charAt(i)) && Character.isDigit(b.charAt(j));
+      int ai = i + 1, bj = j + 1;
+      while (ai < a.length() && Character.isDigit(a.charAt(ai)) == Character.isDigit(a.charAt(i))) ai++;
+      while (bj < b.length() && Character.isDigit(b.charAt(bj)) == Character.isDigit(b.charAt(j))) bj++;
+      int comparison = digits
+          ? new java.math.BigInteger(a.substring(i, ai)).compareTo(new java.math.BigInteger(b.substring(j, bj)))
+          : collator.compare(a.substring(i, ai), b.substring(j, bj));
+      if (comparison != 0) return comparison;
+      i = ai; j = bj;
+    }
+    return Integer.compare(a.length() - i, b.length() - j);
+  }
+
+  private static <T extends Comparable<T>> int compareOptional(T a, T b, boolean descending) {
+    if (a == null || b == null) return a == b ? 0 : a == null ? 1 : -1;
+    return a.compareTo(b) * (descending ? -1 : 1);
+  }
+
+  private static int compareTitleNames(Title a, Title b, java.text.Collator collator, boolean descending) {
+    String left = a == null ? "" : a.name().plain(), right = b == null ? "" : b.name().plain();
+    if (left.isEmpty() || right.isEmpty()) return left.isEmpty() == right.isEmpty() ? 0 : left.isEmpty() ? 1 : -1;
+    return compareNames(left, right, collator) * (descending ? -1 : 1);
   }
 
   private Map<String, Object> me(Session session) {

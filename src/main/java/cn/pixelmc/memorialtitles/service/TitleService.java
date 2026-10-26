@@ -523,7 +523,7 @@ public final class TitleService implements AutoCloseable {
                 .result());
   }
 
-  public record HistoryPage(List<Audit> rows, long total, int page, int size) {}
+  public record HistoryPage(List<Audit> rows, long total, int page, int size, List<Long> categoryCounts) {}
 
   public CompletableFuture<HistoryPage> searchHistory(
       Actor actor, String query, String action, String player, String title, int page, int size) {
@@ -558,6 +558,21 @@ public final class TitleService implements AutoCloseable {
                       Object[] values = {
                         action, action, player, player, title, title, query, query
                       };
+                      // Category totals cover this player/title scope, independently of search,
+                      // selected action, and pagination. Hidden recovery audits stay protected.
+                      List<Long> categoryCounts;
+                      try (var stmt = tx.connection.prepareStatement(
+                          "SELECT COUNT(*), COALESCE(SUM(a.action IN ('GRANT','REVOKE')),0),"
+                              + " COALESCE(SUM(a.action IN ('TITLE_SAVE','TITLE_DELETE','RELOAD')),0)"
+                              + " FROM mt_audit a WHERE NOT EXISTS (SELECT 1 FROM mt_audit_hidden h"
+                              + " WHERE h.audit_id=a.id) AND (?='' OR a.target=?) AND (?='' OR a.title=?)")) {
+                        stmt.setString(1, player); stmt.setString(2, player);
+                        stmt.setString(3, title); stmt.setString(4, title);
+                        try (var rs = stmt.executeQuery()) {
+                          rs.next();
+                          categoryCounts = List.of(rs.getLong(1), rs.getLong(2), rs.getLong(3));
+                        }
+                      }
                       long total;
                       try (var stmt =
                           tx.connection.prepareStatement("SELECT COUNT(*)" + from + where)) {
@@ -574,7 +589,7 @@ public final class TitleService implements AutoCloseable {
                               "SELECT a.*"
                                   + from
                                   + where
-                                  + " ORDER BY a.id DESC LIMIT ? OFFSET ?")) {
+                                  + " ORDER BY a.at_ms DESC, a.id DESC LIMIT ? OFFSET ?")) {
                         for (int i = 0; i < values.length; i++) stmt.setObject(i + 1, values[i]);
                         stmt.setInt(9, size);
                         stmt.setLong(10, (long) actual * size);
@@ -591,7 +606,7 @@ public final class TitleService implements AutoCloseable {
                                     rs.getString("reason")));
                         }
                       }
-                      return new HistoryPage(List.copyOf(rows), total, actual, size);
+                      return new HistoryPage(List.copyOf(rows), total, actual, size, categoryCounts);
                     })
                 .result());
   }

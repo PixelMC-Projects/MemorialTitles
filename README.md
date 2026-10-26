@@ -11,7 +11,7 @@
 - 支持分段颜色、渐变和文字样式，可用资源包自定义菜单图标。
 - 每人同时佩戴一个称号，可独立选择头顶、聊天和 TAB 的显示位置。
 - 收藏公开与佩戴展示分开设置，保留玩家的隐私选择。
-- 网页管理台支持编辑、批量发放、撤销和查看持有人。
+- 网页管理台支持编辑、批量发放、撤销和查看持有人；提供在线 / 离线分类、全量排序和分类计数。
 - 支持首登纪念奖励；进服后的通知延迟发送，离线通知会保留。
 - 跨存档保存收藏，支持逐项撤回、资料清理和备份。
 
@@ -33,6 +33,8 @@
 
 接入 **PixelMC Manager** 时，配套安装 Manager Forge 模组与常驻网页服务，将 `server.json` 的 `mode` 改为 `manager`，保留其余字段，并配置 `config/pixelmcmanager-bridge.json`。网页账号和整合包 / 存档绑定按 [Manager 部署说明](https://github.com/PixelMC-Projects/pixelmcmanager-forge/blob/mc-1.20.1/manager-service/README.md) 完成；此模式的网页和账号由 Manager 管理。
 
+升级至 **0.4.2-dev** 前先做完整备份，正常关服后替换服务端及客户端旧 JAR，保留数据库、`config/memorialtitles` 和备份目录。网页资源已包含在 JAR 中，无需另建静态网页实例。Manager 模式先更新配套网页服务，再更新游戏模组；新旧两端须同时支持玩家分类和历史计数接口。本次改动无新增数据库结构；回滚时换回旧 JAR / 配套网页服务并保留当前数据库，勿恢复整库覆盖后续操作。
+
 ## English
 
 Collect memorable player titles and display them above names, in chat, and in the player list.
@@ -42,7 +44,7 @@ Collect memorable player titles and display them above names, in chat, and in th
 - Create colored, gradient, and styled titles, with resource-pack support for menu icons.
 - Wear one title at a time and choose its visibility above the name, in chat, and in TAB.
 - Control collection privacy separately from equipped-title visibility.
-- Edit titles, grant or revoke them in batches, and browse holders through the web console.
+- Edit titles, grant or revoke them in batches, and browse holders through the web console, with online/offline categories, complete-set sorting, and category totals.
 - Offer first-join rewards, delay join-time notices, and retain notifications for offline players.
 - Preserve collections across worlds, with selective undo, profile cleanup, and backups.
 
@@ -63,6 +65,8 @@ Standalone mode:
 5. Visit `http://SERVER_IP:WEB_PORT` and sign in with that account. Reset its password with `mtconsole web-password WebUsername` in the server console when needed.
 
 For **PixelMC Manager** mode, install its Forge mod and independent web service together. Set `mode` to `manager` in `server.json`, retain the other fields, and configure `config/pixelmcmanager-bridge.json`. Follow the [Manager deployment guide](https://github.com/PixelMC-Projects/pixelmcmanager-forge/blob/mc-1.20.1/manager-service/README.md) for web-account creation and modpack/world binding. Manager provides the web UI and accounts in this mode.
+
+Before upgrading to **0.4.2-dev**, create a complete backup, stop normally, and replace the old JAR on both server and clients. Preserve the database, `config/memorialtitles`, and backups. The JAR includes the standalone web UI; no separate static-site instance is needed. In Manager mode, update the matching web service before the game mod so both ends support presence and history totals. This change adds no database schema. Roll back the matching JAR/web service while retaining current data; avoid a whole-database restore that overwrites later operations.
 
 ### Configuration example / 配置示例
 

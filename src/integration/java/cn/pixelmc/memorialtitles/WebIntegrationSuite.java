@@ -34,6 +34,91 @@ public final class WebIntegrationSuite {
     return new Title(id, RichText.plain(name), "说明", "香草纪元", "管理员发放", "纪念", 0, 7, false, true, 0);
   }
 
+  private static String firstName(JsonObject page) {
+    return page.getAsJsonArray("rows").get(0).getAsJsonObject().get("name").getAsString();
+  }
+
+  private static void listingChecks(Browser b, TitleService service, Database root, String dbName,
+      UUID admin, UUID bob) throws Exception {
+    var actor = TitleService.Actor.consoleActor();
+    List<UUID> players = new ArrayList<>();
+    for (int i = 45; i >= 1; i--) {
+      UUID id = UUID.nameUUIDFromBytes(("listing-player-" + i).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      waitFor(service.login(id, "PagePlayer" + i));
+      players.add(0, id);
+    }
+    var all = b.json(b.get("/api/players?q=PagePlayer&size=20&page=1&sort=name&direction=asc"));
+    check(all.get("total").getAsInt() == 45 && firstName(all).equals("PagePlayer21"),
+        "player natural-name sort covers the complete collection before pagination");
+    check(firstName(b.json(b.get("/api/players?q=PagePlayer&size=20&page=1&sort=name&direction=desc"))).equals("PagePlayer25"),
+        "descending player sort crosses page boundaries");
+    JsonObject counts = all.getAsJsonObject("presenceCounts");
+    check(counts.get("all").getAsInt() == service.snapshot().players().size()
+        && counts.get("online").getAsInt() == 1
+        && counts.get("offline").getAsInt() == service.snapshot().players().size() - 1,
+        "presence counts cover all registered profiles independently of search and pagination");
+    var online = b.json(b.get("/api/players?presence=online"));
+    check(online.get("total").getAsInt() == 1
+        && online.getAsJsonArray("rows").get(0).getAsJsonObject().get("id").getAsString().equals(admin.toString()),
+        "online presence returns registered online players");
+    check(b.json(b.get("/api/players?presence=offline&q=PagePlayer")).get("total").getAsInt() == 45,
+        "offline presence filters the full collection");
+    check(firstName(b.json(b.get("/api/players?sort=status&direction=desc"))).equals("Alpha"),
+        "status reversal only reverses groups and keeps names ascending within a group");
+    check(b.json(b.get("/api/players?online=true")).get("total").getAsInt() == 1,
+        "legacy online parameter remains supported");
+    waitFor(service.saveTitle(actor, title("z_sort_id", "AlphaCap"), 0));
+    waitFor(service.saveTitle(actor, title("a_sort_id", "ZuluCap"), 0));
+    waitFor(service.grant(actor, List.of(players.get(0)), "z_sort_id", "listing test"));
+    waitFor(service.grant(actor, List.of(players.get(1)), "a_sort_id", "listing test"));
+    waitFor(service.grant(actor, List.of(players.get(1)), "z_sort_id", "listing test"));
+    waitFor(service.equip(players.get(0), "z_sort_id"));
+    waitFor(service.equip(players.get(1), "a_sort_id"));
+    check(firstName(b.json(b.get("/api/players?q=PagePlayer&sort=equipped&direction=asc"))).equals("PagePlayer1")
+        && firstName(b.json(b.get("/api/players?q=PagePlayer&sort=equipped&direction=desc"))).equals("PagePlayer2"),
+        "equipped sort uses title display names and leaves missing equipment last in both directions");
+    check(firstName(b.json(b.get("/api/players?q=PagePlayer&sort=ownedCount&direction=desc"))).equals("PagePlayer2")
+        && firstName(b.json(b.get("/api/players?q=PagePlayer&sort=ownedCount&direction=asc"))).equals("PagePlayer3"),
+        "collection counts sort numerically and stabilize equal values by natural player name");
+    try (Connection c = root.open(); var stmt = c.prepareStatement("UPDATE " + dbName + ".mt_players SET last_seen=? WHERE uuid=?")) {
+      for (int i = 0; i < players.size(); i++) {
+        stmt.setLong(1, i == 44 ? 0 : 100000L + i * 1000L);
+        stmt.setString(2, players.get(i).toString()); stmt.executeUpdate();
+      }
+    }
+    waitFor(service.reconnect());
+    check(firstName(b.json(b.get("/api/players?q=PagePlayer&sort=lastSeen&direction=asc"))).equals("PagePlayer1")
+        && firstName(b.json(b.get("/api/players?q=PagePlayer&sort=lastSeen&direction=desc"))).equals("PagePlayer44"),
+        "last login sorts by real timestamps with unknown times last in both directions");
+    var empty = b.json(b.get("/api/players?q=no-such-player&page=999"));
+    check(empty.getAsJsonArray("rows").isEmpty() && empty.get("page").getAsInt() == 0
+        && empty.getAsJsonObject("presenceCounts").equals(counts),
+        "empty search clamps pagination and preserves complete presence counts");
+    check(b.get("/api/players?presence=invalid").statusCode() == 400
+        && b.get("/api/players?sort=invalid").statusCode() == 400
+        && b.get("/api/players?direction=invalid").statusCode() == 400,
+        "invalid presence and sort options are rejected explicitly");
+    var history = b.json(b.get("/api/history?size=1"));
+    var searched = b.json(b.get("/api/history?q=no-such-history&action=GRANT,REVOKE&size=1&page=999"));
+    check(searched.get("total").getAsInt() == 0
+        && searched.getAsJsonArray("categoryCounts").equals(history.getAsJsonArray("categoryCounts")),
+        "history category totals are independent of keyword, selected category and page");
+    var scoped = b.json(b.get("/api/history?player=" + bob + "&size=1"));
+    var scopedSearch = b.json(b.get("/api/history?player=" + bob + "&q=missing&action=TITLE_SAVE&size=1"));
+    check(scoped.getAsJsonArray("categoryCounts").equals(scopedSearch.getAsJsonArray("categoryCounts"))
+        && scoped.getAsJsonArray("categoryCounts").get(0).getAsLong() == scoped.get("total").getAsLong(),
+        "history category totals retain the current player's scope");
+    try (Connection c = root.open()) {
+      Database.execute(c, "UPDATE " + dbName + ".mt_audit SET at_ms=1999999999999 ORDER BY id ASC LIMIT 1");
+    }
+    var recent = b.json(b.get("/api/history?size=100")).getAsJsonArray("rows");
+    long previous = Long.MAX_VALUE;
+    boolean latestFirst = true;
+    for (var row : recent) { long at = row.getAsJsonObject().get("at").getAsLong(); latestFirst &= at <= previous; previous = at; }
+    check(latestFirst && recent.get(0).getAsJsonObject().get("at").getAsLong() == 1999999999999L,
+        "history stays latest first by timestamp even when audit IDs have a different order");
+  }
+
   private static final class Browser {
     final HttpClient http =
         HttpClient.newBuilder()
@@ -453,6 +538,7 @@ public final class WebIntegrationSuite {
             b.login("Web_Reset_Password_456").statusCode() == 401
                 && b.login("Web_Changed_Password_789").statusCode() == 200,
             "only changed password works");
+        listingChecks(b, s, root, dbName, admin, bob);
         check(
             b.post("/api/logout", Map.of()).statusCode() == 200
                 && b.get("/api/me").statusCode() == 401,
