@@ -31,9 +31,12 @@
 4. 重新开服，等待数据库连接成功，并让管理员玩家至少成功进服一次。在**真实服务端控制台**执行 `mtconsole grant 玩家名或UUID`，再执行 `mtconsole web-user 玩家名或UUID 网页用户名`；控制台会显示生成的初始密码。
 5. 打开 `http://服务器IP:网页端口`，使用刚创建的网页账号登录。需要重置密码时，在控制台使用 `mtconsole web-password 网页用户名`。
 
-接入 **PixelMC Manager** 时，配套安装 Manager Forge 模组与常驻网页服务，将 `server.json` 的 `mode` 改为 `manager`，保留其余字段，并配置 `config/pixelmcmanager-bridge.json`。网页账号和整合包 / 存档绑定按 [Manager 部署说明](https://github.com/PixelMC-Projects/pixelmcmanager-forge/blob/mc-1.20.1/manager-service/README.md) 完成；此模式的网页和账号由 Manager 管理。
+接入 **PixelMC Manager 0.6.0+** 时，安装配套 Manager Forge 模组与常驻网页服务，将 `server.json` 的 `mode` 改为 `manager`，并配置 `config/pixelmcmanager-bridge.json`。网页登录、全局玩家身份、头像与统一备份由 Manager 管理；未拥有称号的已知玩家也会显示。称号、收藏与隐私偏好仍跨存档保留。账号与数据源配置见 [Manager 部署说明](https://github.com/PixelMC-Projects/pixelmcmanager-forge/blob/mc-1.20.1/manager-service/README.md)。
 
-升级至 **0.4.2-dev** 前先做完整备份，正常关服后替换服务端及客户端旧 JAR，保留数据库、`config/memorialtitles` 和备份目录。网页资源已包含在 JAR 中，无需另建静态网页实例。Manager 模式先更新配套网页服务，再更新游戏模组；新旧两端须同时支持玩家分类和历史计数接口。本次改动无新增数据库结构；回滚时换回旧 JAR / 配套网页服务并保留当前数据库，勿恢复整库覆盖后续操作。
+升级至 **0.5.0-dev** 前先完整备份，正常关服后同步替换服务端与客户端 JAR。独立模式保留原配置和数据库即可。旧 Manager 分库部署需先迁移到**新的统一数据库**，核对玩家、收藏、领奖、通知与撤回记录后再切换配置；保留原库以便回滚，不能只改数据库地址。先更新配套网页服务，再更新游戏模组。本版本要求新旧两端一起升级。
+
+Manager 模式只在可信的首次全局登录时发放首登奖励，迁移目录或旧玩家首次使用称号功能不会补发。称号页的资料清理只处理称号数据，保留全局身份、头像与其他插件资料；操作仍可按冲突检查逐项撤回。
+
 
 ## English
 
@@ -64,9 +67,12 @@ Standalone mode:
 4. Restart the server, wait for its database connection, and have the administrator join successfully once. In the **actual server console**, run `mtconsole grant PlayerNameOrUUID`, then `mtconsole web-user PlayerNameOrUUID WebUsername`. The console prints the generated initial password.
 5. Visit `http://SERVER_IP:WEB_PORT` and sign in with that account. Reset its password with `mtconsole web-password WebUsername` in the server console when needed.
 
-For **PixelMC Manager** mode, install its Forge mod and independent web service together. Set `mode` to `manager` in `server.json`, retain the other fields, and configure `config/pixelmcmanager-bridge.json`. Follow the [Manager deployment guide](https://github.com/PixelMC-Projects/pixelmcmanager-forge/blob/mc-1.20.1/manager-service/README.md) for web-account creation and modpack/world binding. Manager provides the web UI and accounts in this mode.
+For **PixelMC Manager 0.6.0+**, install the matching Forge mod and independent web service, set `mode` to `manager` in `server.json`, and configure `config/pixelmcmanager-bridge.json`. Manager owns web authentication, the global player directory, avatars and coordinated backups. Known players appear even with no titles; title collections and privacy preferences remain global across worlds. See the [Manager deployment guide](https://github.com/PixelMC-Projects/pixelmcmanager-forge/blob/mc-1.20.1/manager-service/README.md) for accounts and data-source setup.
 
-Before upgrading to **0.4.2-dev**, create a complete backup, stop normally, and replace the old JAR on both server and clients. Preserve the database, `config/memorialtitles`, and backups. The JAR includes the standalone web UI; no separate static-site instance is needed. In Manager mode, update the matching web service before the game mod so both ends support presence and history totals. This change adds no database schema. Roll back the matching JAR/web service while retaining current data; avoid a whole-database restore that overwrites later operations.
+Before upgrading to **0.5.0-dev**, make a complete backup, stop normally and replace the server and client JARs together. Standalone deployments retain their existing configuration and database. Legacy Manager deployments with separate databases must migrate into a **new unified database**, verify player, collection, receipt, notification and undo records, then switch configuration. Keep source databases for rollback; changing only the database URL is insufficient. Update the matching web service before the game mods.
+
+In managed mode, first-join rewards require a trusted first global login. Directory migration and an existing player's first use of Titles never award them. Title-profile cleanup affects title records while retaining the global identity, avatar and other modules; selective undo continues to check conflicts.
+
 
 ### Configuration example / 配置示例
 

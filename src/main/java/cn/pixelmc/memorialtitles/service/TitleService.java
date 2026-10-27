@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 public final class TitleService implements AutoCloseable {
@@ -51,6 +52,83 @@ public final class TitleService implements AutoCloseable {
   private volatile long lastSuccess;
   private volatile ChangeJournal.Assets assets = ChangeJournal.NO_ASSETS;
   private volatile Predicate<UUID> online = id -> false;
+  private volatile Function<JsonObject, JsonObject> platform;
+  private volatile Map<UUID, Profile> directory = Map.of();
+  private volatile long directoryExpires;
+
+  /** Binds the Manager-owned identity directory; null preserves standalone operation. */
+  public void attachPlatform(Function<JsonObject, JsonObject> value) {
+    platform = value;
+    directory = Map.of();
+    directoryExpires = 0;
+  }
+
+  public boolean managed() {
+    return platform != null;
+  }
+
+  private JsonObject platform(String op, UUID player) {
+    JsonObject request = new JsonObject();
+    request.addProperty("op", op);
+    if (player != null) request.addProperty("player", player.toString());
+    JsonObject response =
+        Objects.requireNonNull(platform.apply(request), "Manager response missing");
+    if (response.has("error")) throw new IllegalStateException(response.get("error").getAsString());
+    return response;
+  }
+
+  private static Profile profile(JsonObject value) {
+    return new Profile(
+        UUID.fromString(value.get("id").getAsString()),
+        value.get("name").getAsString(),
+        timestamp(value, "firstJoinedAt"),
+        timestamp(value, "lastSeen"));
+  }
+
+  private static long timestamp(JsonObject value, String key) {
+    return !value.has(key) || value.get(key).isJsonNull() ? 0 : value.get(key).getAsLong();
+  }
+
+  private Map<UUID, Profile> directory() {
+    if (!managed()) return Map.of();
+    long now = System.nanoTime();
+    if (directoryExpires - now > 0) return directory;
+    synchronized (this) {
+      if (directoryExpires - now > 0) return directory;
+      Map<UUID, Profile> next = new HashMap<>();
+      for (JsonElement item : platform("profiles.list", null).getAsJsonArray("players")) {
+        Profile p = profile(item.getAsJsonObject());
+        if (next.put(p.id(), p) != null)
+          throw new IllegalStateException("Manager directory contains duplicate UUID");
+      }
+      directory = Map.copyOf(next);
+      directoryExpires = now + TimeUnit.SECONDS.toNanos(1);
+      return directory;
+    }
+  }
+
+  private Snapshot project(Snapshot source) {
+    if (!managed()) return source;
+    // Legacy rows are FK/business caches, never the authority for current names or avatars.
+    Map<UUID, Profile> players = new HashMap<>(source.players());
+    players.putAll(directory());
+    return new Snapshot(
+        source.titles(),
+        players,
+        source.owned(),
+        source.equipped(),
+        source.admins(),
+        source.receipts(),
+        source.settings(),
+        source.displayPreferences());
+  }
+
+  private Profile globalProfile(UUID id) {
+    JsonElement value = platform("profiles.get", id).get("profile");
+    if (value == null || value.isJsonNull())
+      throw new IllegalArgumentException("玩家未在 Manager 登记: " + id);
+    return profile(value.getAsJsonObject());
+  }
 
   public void attachPlayerAssets(ChangeJournal.Assets value, Predicate<UUID> online) {
     this.assets = value;
@@ -61,27 +139,64 @@ public final class TitleService implements AutoCloseable {
     this.db = db;
     this.remote = null;
   }
-  private TitleService(RemoteGateway gateway){this.db=null;this.remote=gateway;}
-  public static TitleService remoteService(){return new TitleService(new RemoteGateway());}
-  public boolean remote(){return remote!=null;}
-  private <T> CompletableFuture<T> remoteCall(String method,java.lang.reflect.Type type,Object...arguments){
-    JsonArray args=new JsonArray();for(Object argument:arguments)args.add(JSON.toJsonTree(argument));
-    return remote.call(method,args).handle((response,error)->{
-      if(error!=null){healthy=false;throw new CompletionException(error);}
-      boolean remoteHealthy=!response.has("healthy")||response.get("healthy").getAsBoolean();
-      if(!remoteHealthy){healthy=false;throw new CompletionException(new IllegalStateException("称号数据库暂不可用"));}
-      if(response.has("snapshot")&&!response.get("snapshot").isJsonNull())publish(JSON.fromJson(response.get("snapshot"),SnapshotTransfer.class).snapshot());
-      healthy=true;remote.confirm(response);
-      if(response.has("error"))throw new CompletionException(new IllegalStateException(response.get("error").getAsString()));
-      return type==Void.class?null:JSON.<T>fromJson(response.get("result"),type);
-    });
+
+  private TitleService(RemoteGateway gateway) {
+    this.db = null;
+    this.remote = gateway;
   }
-  public CompletableFuture<Void> remoteAvatar(UUID id,String nonce,String png){return remoteCall("avatarUpload",Void.class,id,nonce,png);}
-  public CompletableFuture<java.nio.file.Path> remoteBackup(Actor actor){return this.<String>remoteCall("backendBackup",String.class,actor).thenApply(java.nio.file.Path::of);}
-  public CompletableFuture<Void> remoteReload(Actor actor){return remoteCall("backendReload",Void.class,actor);}
+
+  public static TitleService remoteService() {
+    return new TitleService(new RemoteGateway());
+  }
+
+  public boolean remote() {
+    return remote != null;
+  }
+
+  private <T> CompletableFuture<T> remoteCall(
+      String method, java.lang.reflect.Type type, Object... arguments) {
+    JsonArray args = new JsonArray();
+    for (Object argument : arguments) args.add(JSON.toJsonTree(argument));
+    return remote
+        .call(method, args)
+        .handle(
+            (response, error) -> {
+              if (error != null) {
+                healthy = false;
+                throw new CompletionException(error);
+              }
+              boolean remoteHealthy =
+                  !response.has("healthy") || response.get("healthy").getAsBoolean();
+              if (!remoteHealthy) {
+                healthy = false;
+                throw new CompletionException(new IllegalStateException("称号数据库暂不可用"));
+              }
+              if (response.has("snapshot") && !response.get("snapshot").isJsonNull())
+                publish(JSON.fromJson(response.get("snapshot"), SnapshotTransfer.class).snapshot());
+              healthy = true;
+              remote.confirm(response);
+              if (response.has("error"))
+                throw new CompletionException(
+                    new IllegalStateException(response.get("error").getAsString()));
+              return type == Void.class ? null : JSON.<T>fromJson(response.get("result"), type);
+            });
+  }
+
+  public CompletableFuture<Void> remoteAvatar(UUID id, String nonce, String png) {
+    return remoteCall("avatarUpload", Void.class, id, nonce, png);
+  }
+
+  public CompletableFuture<java.nio.file.Path> remoteBackup(Actor actor) {
+    return this.<String>remoteCall("backendBackup", String.class, actor)
+        .thenApply(java.nio.file.Path::of);
+  }
+
+  public CompletableFuture<Void> remoteReload(Actor actor) {
+    return remoteCall("backendReload", Void.class, actor);
+  }
 
   public Snapshot snapshot() {
-    return snapshot;
+    return project(snapshot);
   }
 
   public boolean healthy() {
@@ -97,26 +212,32 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<List<PlayerNotice>> notifications(UUID player) {
-    if(remote!=null)return remoteCall("notifications", new com.google.gson.reflect.TypeToken<List<PlayerNotice>>(){}.getType(), player);
+    if (remote != null)
+      return remoteCall(
+          "notifications",
+          new com.google.gson.reflect.TypeToken<List<PlayerNotice>>() {}.getType(),
+          player);
 
     return background(() -> db.notifications(player));
   }
 
-  public CompletableFuture<Void> acknowledgeNotifications(UUID player, List<PlayerNotice> messages) {
-    if(remote!=null)return remoteCall("acknowledgeNotifications", Void.class, player, messages);
+  public CompletableFuture<Void> acknowledgeNotifications(
+      UUID player, List<PlayerNotice> messages) {
+    if (remote != null) return remoteCall("acknowledgeNotifications", Void.class, player, messages);
 
-    return background(() -> {
-      db.acknowledgeNotifications(player, messages);
-      return null;
-    });
+    return background(
+        () -> {
+          db.acknowledgeNotifications(player, messages);
+          return null;
+        });
   }
 
   private void publish(Snapshot next) {
-    boolean changed=!next.equals(snapshot);
+    boolean changed = !next.equals(snapshot);
     snapshot = next;
     healthy = true;
     lastSuccess = System.currentTimeMillis();
-    if(!changed)return;
+    if (!changed) return;
     for (var l : listeners)
       try {
         l.accept(next);
@@ -143,7 +264,7 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<Void> reconnect() {
-    if(remote!=null)return remoteCall("reconnect", Void.class);
+    if (remote != null) return remoteCall("reconnect", Void.class);
 
     return background(
         () -> {
@@ -176,22 +297,38 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<Void> login(UUID id, String name) {
-    if(remote!=null)return remoteCall("login", Void.class, id, name);
+    if (remote != null) return remoteCall("login", Void.class, id, name);
 
     return write(
         tx -> {
+          JsonObject context = managed() ? platform("profiles.loginContext", id) : null;
+          if (context != null
+              && (!context.has("admitted")
+                  || !context.get("admitted").getAsBoolean()
+                  || !context.has("eventId")
+                  || context.get("eventId").isJsonNull()
+                  || context.get("eventId").getAsString().isBlank()))
+            throw new SecurityException("玩家尚未通过 Manager 的真实登录校验");
           long now = System.currentTimeMillis();
+          Profile p = managed() ? globalProfile(id) : new Profile(id, name, now, now);
           tx.sql(
               "INSERT INTO mt_players(uuid,name,joined_at,last_seen) VALUES(?,?,?,?) ON DUPLICATE"
                   + " KEY UPDATE name=VALUES(name),last_seen=VALUES(last_seen)",
               id.toString(),
-              name,
-              now,
-              now);
+              p.name(),
+              p.joinedAt(),
+              p.lastSeen());
           Snapshot s = tx.snapshot();
           String reward = s.settings().reward();
           Title t = s.titles().get(reward);
-          if (t != null && t.issuable() && !s.receipts().containsKey(new Key(id, reward))) {
+          boolean eligible =
+              context == null
+                  || (context.has("firstGlobalLogin")
+                      && context.get("firstGlobalLogin").getAsBoolean());
+          if (eligible
+              && t != null
+              && t.issuable()
+              && !s.receipts().containsKey(new Key(id, reward))) {
             grant(tx, s, Actor.api("first-login"), id, t, "首次登录奖励");
             tx.sql(
                 "INSERT INTO mt_receipts(player,title,claimed_at) VALUES(?,?,?)",
@@ -204,13 +341,13 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<Void> authorize(Actor actor, UUID id, boolean value) {
-    if(remote!=null)return remoteCall("authorize", Void.class, actor, id, value);
+    if (remote != null) return remoteCall("authorize", Void.class, actor, id, value);
 
     return write(
         tx -> {
           if (!actor.console) throw new SecurityException("仅真实服务器控制台可改变授权");
           Snapshot s = tx.snapshot();
-          known(s, id);
+          known(tx, s, id);
           if (value) tx.sql("INSERT IGNORE INTO mt_admins(player) VALUES(?)", id.toString());
           else tx.sql("DELETE FROM mt_admins WHERE player=?", id.toString());
           tx.audit(
@@ -220,7 +357,7 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<Void> saveTitle(Actor actor, Title title, long expectedRevision) {
-    if(remote!=null)return remoteCall("saveTitle", Void.class, actor, title, expectedRevision);
+    if (remote != null) return remoteCall("saveTitle", Void.class, actor, title, expectedRevision);
 
     return write(
         tx -> {
@@ -240,7 +377,7 @@ public final class TitleService implements AutoCloseable {
 
   public CompletableFuture<Integer> grant(
       Actor actor, Collection<UUID> targets, String title, String reason) {
-    if(remote!=null)return remoteCall("grant", Integer.class, actor, targets, title, reason);
+    if (remote != null) return remoteCall("grant", Integer.class, actor, targets, title, reason);
 
     List<UUID> ids = targets(targets);
     return write(
@@ -251,7 +388,7 @@ public final class TitleService implements AutoCloseable {
           if (!t.issuable()) throw new IllegalStateException("此称号已停发");
           int count = 0;
           for (UUID id : ids) {
-            known(s, id);
+            known(tx, s, id);
             if (grant(tx, s, actor, id, t, reason)) count++;
           }
           return count;
@@ -259,20 +396,35 @@ public final class TitleService implements AutoCloseable {
   }
 
   public record TitleDeletePreview(
-      String id, RichText name, int holders, int equipped, int receipts, boolean reward, String stamp) {}
+      String id,
+      RichText name,
+      int holders,
+      int equipped,
+      int receipts,
+      boolean reward,
+      String stamp) {}
 
-  private TitleDeletePreview titleDeletion(Database.Tx tx, Actor actor, String id) throws Exception {
+  private TitleDeletePreview titleDeletion(Database.Tx tx, Actor actor, String id)
+      throws Exception {
     Snapshot s = tx.snapshot();
     requireAdmin(s, actor);
     Title title = definition(s, id);
-    var owned = s.owned().values().stream().filter(o -> o.title().equals(id))
-        .sorted(Comparator.comparing(o -> o.player().toString())).toList();
-    var receipts = s.receipts().values().stream().filter(r -> r.title().equals(id))
-        .sorted(Comparator.comparing(r -> r.player().toString())).toList();
+    var owned =
+        s.owned().values().stream()
+            .filter(o -> o.title().equals(id))
+            .sorted(Comparator.comparing(o -> o.player().toString()))
+            .toList();
+    var receipts =
+        s.receipts().values().stream()
+            .filter(r -> r.title().equals(id))
+            .sorted(Comparator.comparing(r -> r.player().toString()))
+            .toList();
     Map<String, String> equipped = new TreeMap<>();
-    s.equipped().forEach((player, value) -> {
-      if (value.equals(id)) equipped.put(player.toString(), value);
-    });
+    s.equipped()
+        .forEach(
+            (player, value) -> {
+              if (value.equals(id)) equipped.put(player.toString(), value);
+            });
     boolean reward = s.settings().reward().equals(id);
     JsonObject impact = new JsonObject();
     impact.add("title", JSON.toJsonTree(title));
@@ -281,46 +433,74 @@ public final class TitleService implements AutoCloseable {
     impact.add("receipts", JSON.toJsonTree(receipts));
     impact.addProperty("reward", reward);
     impact.addProperty("epoch", ChangeJournal.version(tx, "G|title|" + id));
-    String stamp = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
-        .digest(JSON.toJson(impact).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-    return new TitleDeletePreview(id, title.name(), owned.size(), equipped.size(), receipts.size(), reward, stamp);
+    String stamp =
+        HexFormat.of()
+            .formatHex(
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(JSON.toJson(impact).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    return new TitleDeletePreview(
+        id, title.name(), owned.size(), equipped.size(), receipts.size(), reward, stamp);
   }
 
   public CompletableFuture<TitleDeletePreview> titleDeletePreview(Actor actor, String id) {
-    if(remote!=null)return remoteCall("titleDeletePreview", TitleDeletePreview.class, actor, id);
+    if (remote != null)
+      return remoteCall("titleDeletePreview", TitleDeletePreview.class, actor, id);
 
     return background(() -> db.transaction(tx -> titleDeletion(tx, actor, id)).result());
   }
 
-  public CompletableFuture<Integer> deleteTitle(Actor actor, String id, String stamp, String confirmName) {
-    if(remote!=null)return remoteCall("deleteTitle", Integer.class, actor, id, stamp, confirmName);
+  public CompletableFuture<Integer> deleteTitle(
+      Actor actor, String id, String stamp, String confirmName) {
+    if (remote != null)
+      return remoteCall("deleteTitle", Integer.class, actor, id, stamp, confirmName);
 
-    return write(tx -> {
-      TitleDeletePreview preview = titleDeletion(tx, actor, id);
-      if (!preview.stamp().equals(stamp))
-        throw new IllegalStateException("称号或相关持有、佩戴、首登奖励已发生变化，请重新预览后确认");
-      if (!preview.name().plain().equals(confirmName))
-        throw new IllegalArgumentException("请输入完整称号名称，确认删除该称号");
-      Snapshot before = tx.snapshot();
-      tx.sql("DELETE FROM mt_equipped WHERE title=?", id);
-      tx.sql("DELETE FROM mt_owned WHERE title=?", id);
-      tx.sql("DELETE FROM mt_receipts WHERE title=?", id);
-      // An unread grant for a now-deleted title must not be displayed before its removal notice.
-      tx.sql("DELETE FROM mt_notifications WHERE title=? AND granted=TRUE", id);
-      if (preview.reward()) {
-        Settings x = before.settings();
-        tx.settings(new Settings("", x.head(), x.chat(), x.tab(), x.headScale(), x.headOffset(),
-            x.chatPrefix(), x.retentionDays(), x.packName(), x.packStartedOn()));
-      }
-      tx.sql("DELETE FROM mt_titles WHERE id=?", id);
-      long audit = tx.audit(actor.auditName(), "TITLE_DELETE", "", id,
-          "删除称号「" + preview.name().plain() + "」，清除" + preview.holders() + "名玩家持有及相关记录");
-      tx.customJournal = true;
-      tx.changeUnits.add(new ChangeJournal.Unit(audit,
-          "删除称号「" + preview.name().plain() + "」及关联记录", "", id,
-          List.copyOf(ChangeJournal.diff(before, tx.snapshot()))));
-      return preview.holders();
-    });
+    return write(
+        tx -> {
+          TitleDeletePreview preview = titleDeletion(tx, actor, id);
+          if (!preview.stamp().equals(stamp))
+            throw new IllegalStateException("称号或相关持有、佩戴、首登奖励已发生变化，请重新预览后确认");
+          if (!preview.name().plain().equals(confirmName))
+            throw new IllegalArgumentException("请输入完整称号名称，确认删除该称号");
+          Snapshot before = tx.snapshot();
+          tx.sql("DELETE FROM mt_equipped WHERE title=?", id);
+          tx.sql("DELETE FROM mt_owned WHERE title=?", id);
+          tx.sql("DELETE FROM mt_receipts WHERE title=?", id);
+          // An unread grant for a now-deleted title must not be displayed before its removal
+          // notice.
+          tx.sql("DELETE FROM mt_notifications WHERE title=? AND granted=TRUE", id);
+          if (preview.reward()) {
+            Settings x = before.settings();
+            tx.settings(
+                new Settings(
+                    "",
+                    x.head(),
+                    x.chat(),
+                    x.tab(),
+                    x.headScale(),
+                    x.headOffset(),
+                    x.chatPrefix(),
+                    x.retentionDays(),
+                    x.packName(),
+                    x.packStartedOn()));
+          }
+          tx.sql("DELETE FROM mt_titles WHERE id=?", id);
+          long audit =
+              tx.audit(
+                  actor.auditName(),
+                  "TITLE_DELETE",
+                  "",
+                  id,
+                  "删除称号「" + preview.name().plain() + "」，清除" + preview.holders() + "名玩家持有及相关记录");
+          tx.customJournal = true;
+          tx.changeUnits.add(
+              new ChangeJournal.Unit(
+                  audit,
+                  "删除称号「" + preview.name().plain() + "」及关联记录",
+                  "",
+                  id,
+                  List.copyOf(ChangeJournal.diff(before, tx.snapshot()))));
+          return preview.holders();
+        });
   }
 
   private static boolean grant(
@@ -339,7 +519,7 @@ public final class TitleService implements AutoCloseable {
 
   public CompletableFuture<Integer> revoke(
       Actor actor, Collection<UUID> targets, String title, String reason) {
-    if(remote!=null)return remoteCall("revoke", Integer.class, actor, targets, title, reason);
+    if (remote != null) return remoteCall("revoke", Integer.class, actor, targets, title, reason);
 
     List<UUID> ids = targets(targets);
     return write(
@@ -349,7 +529,7 @@ public final class TitleService implements AutoCloseable {
           definition(s, title);
           int count = 0;
           for (UUID id : ids) {
-            known(s, id);
+            known(tx, s, id);
             if (tx.sql("DELETE FROM mt_owned WHERE player=? AND title=?", id.toString(), title)
                 > 0) {
               count++;
@@ -361,12 +541,12 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<Void> equip(UUID id, String title) {
-    if(remote!=null)return remoteCall("equip", Void.class, id, title);
+    if (remote != null) return remoteCall("equip", Void.class, id, title);
 
     return write(
         tx -> {
           Snapshot s = tx.snapshot();
-          known(s, id);
+          known(tx, s, id);
           if (title.isEmpty()) tx.sql("DELETE FROM mt_equipped WHERE player=?", id.toString());
           else {
             owned(s, id, title);
@@ -383,7 +563,7 @@ public final class TitleService implements AutoCloseable {
 
   public CompletableFuture<Void> privacy(
       UUID id, String title, boolean collection, boolean display) {
-    if(remote!=null)return remoteCall("privacy", Void.class, id, title, collection, display);
+    if (remote != null) return remoteCall("privacy", Void.class, id, title, collection, display);
 
     return write(
         tx -> {
@@ -401,43 +581,49 @@ public final class TitleService implements AutoCloseable {
 
   /** The caller's authenticated identity comes from the server-side menu, not a client UUID. */
   public CompletableFuture<Void> toggleDisplayPosition(UUID player, DisplayPosition position) {
-    if(remote!=null)return remoteCall("toggleDisplayPosition", Void.class, player, position);
+    if (remote != null) return remoteCall("toggleDisplayPosition", Void.class, player, position);
 
     Objects.requireNonNull(position);
-    return write(tx -> {
-      Snapshot s = tx.snapshot();
-      known(s, player);
-      DisplayPreferences before = s.displayPreferences(player);
-      DisplayPreferences after = before.with(position, !before.enabled(position));
-      tx.displayPreferences(player, after);
-      tx.audit(player.toString(), "DISPLAY_POSITION", player.toString(), "",
-          position.name().toLowerCase(Locale.ROOT) + "=" + after.enabled(position));
-      return null;
-    });
+    return write(
+        tx -> {
+          Snapshot s = tx.snapshot();
+          known(tx, s, player);
+          DisplayPreferences before = s.displayPreferences(player);
+          DisplayPreferences after = before.with(position, !before.enabled(position));
+          tx.displayPreferences(player, after);
+          tx.audit(
+              player.toString(),
+              "DISPLAY_POSITION",
+              player.toString(),
+              "",
+              position.name().toLowerCase(Locale.ROOT) + "=" + after.enabled(position));
+          return null;
+        });
   }
 
   /** Only the authenticated player's command may supply this UUID. */
   public CompletableFuture<Void> setUnequippedReminder(UUID player, boolean enabled) {
     if (remote != null) return remoteCall("setUnequippedReminder", Void.class, player, enabled);
-    return write(tx -> {
-      Snapshot s = tx.snapshot();
-      known(s, player);
-      DisplayPreferences before = s.displayPreferences(player);
-      if (before.reminderEnabled() == enabled) return null;
-      tx.displayPreferences(player, before.withReminderEnabled(enabled));
-      tx.audit(player.toString(), "REMINDER", player.toString(), "", "enabled=" + enabled);
-      return null;
-    });
+    return write(
+        tx -> {
+          Snapshot s = tx.snapshot();
+          known(tx, s, player);
+          DisplayPreferences before = s.displayPreferences(player);
+          if (before.reminderEnabled() == enabled) return null;
+          tx.displayPreferences(player, before.withReminderEnabled(enabled));
+          tx.audit(player.toString(), "REMINDER", player.toString(), "", "enabled=" + enabled);
+          return null;
+        });
   }
 
   public CompletableFuture<Void> settings(Actor actor, Settings settings) {
-    if(remote!=null)return remoteCall("settings", Void.class, actor, settings);
+    if (remote != null) return remoteCall("settings", Void.class, actor, settings);
 
     return settings(actor, settings, null);
   }
 
   public CompletableFuture<Void> settings(Actor actor, Settings settings, Settings expected) {
-    if(remote!=null)return remoteCall("settings", Void.class, actor, settings, expected);
+    if (remote != null) return remoteCall("settings", Void.class, actor, settings, expected);
 
     return write(
         tx -> {
@@ -456,7 +642,7 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<Void> reload(Actor actor, List<Title> titles, Settings settings) {
-    if(remote!=null)return remoteCall("reload", Void.class, actor, titles, settings);
+    if (remote != null) return remoteCall("reload", Void.class, actor, titles, settings);
 
     return reload(actor, titles, settings, null);
   }
@@ -477,7 +663,8 @@ public final class TitleService implements AutoCloseable {
 
   public CompletableFuture<Void> reload(
       Actor actor, List<Title> titles, Settings settings, String expectedStamp) {
-    if(remote!=null)return remoteCall("reload", Void.class, actor, titles, settings, expectedStamp);
+    if (remote != null)
+      return remoteCall("reload", Void.class, actor, titles, settings, expectedStamp);
 
     List<Title> immutable = List.copyOf(titles);
     Set<String> unique = new HashSet<>();
@@ -511,7 +698,12 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<List<Audit>> history(Actor actor, int limit) {
-    if(remote!=null)return remoteCall("history", new com.google.gson.reflect.TypeToken<List<Audit>>(){}.getType(), actor, limit);
+    if (remote != null)
+      return remoteCall(
+          "history",
+          new com.google.gson.reflect.TypeToken<List<Audit>>() {}.getType(),
+          actor,
+          limit);
 
     return background(
         () ->
@@ -523,11 +715,14 @@ public final class TitleService implements AutoCloseable {
                 .result());
   }
 
-  public record HistoryPage(List<Audit> rows, long total, int page, int size, List<Long> categoryCounts) {}
+  public record HistoryPage(
+      List<Audit> rows, long total, int page, int size, List<Long> categoryCounts) {}
 
   public CompletableFuture<HistoryPage> searchHistory(
       Actor actor, String query, String action, String player, String title, int page, int size) {
-    if(remote!=null)return remoteCall("searchHistory", HistoryPage.class, actor, query, action, player, title, page, size);
+    if (remote != null)
+      return remoteCall(
+          "searchHistory", HistoryPage.class, actor, query, action, player, title, page, size);
 
     if (query.length() > 128
         || action.length() > 64
@@ -543,31 +738,55 @@ public final class TitleService implements AutoCloseable {
             db.transaction(
                     tx -> {
                       requireAdmin(tx.snapshot(), actor);
+                      String globalMatches = "";
+                      if (managed() && !query.isEmpty()) {
+                        String needle = query.toLowerCase(Locale.ROOT);
+                        globalMatches =
+                            directory().values().stream()
+                                .filter(p -> p.name().toLowerCase(Locale.ROOT).contains(needle))
+                                .map(p -> p.id().toString())
+                                .collect(java.util.stream.Collectors.joining(","));
+                      }
                       String where =
                           " WHERE NOT EXISTS (SELECT 1 FROM mt_audit_hidden h WHERE"
                               + " h.audit_id=a.id) AND (?='' OR FIND_IN_SET(a.action,?)>0) AND"
                               + " (?='' OR a.target=?) AND (?='' OR a.title=?) AND (?='' OR"
                               + " INSTR(CONVERT(CONCAT_WS('"
                               + " ',a.actor,a.target,a.title,a.reason,a.action,p.name,t.name,d.definition)"
-                              + " USING utf8mb4) COLLATE utf8mb4_unicode_ci,"
-                              + " CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)>0)";
+                              + " USING utf8mb4) COLLATE utf8mb4_unicode_ci, CONVERT(? USING"
+                              + " utf8mb4) COLLATE utf8mb4_unicode_ci)>0 OR"
+                              + " FIND_IN_SET(a.actor,?)>0 OR FIND_IN_SET(a.target,?)>0)";
                       String from =
                           " FROM mt_audit a LEFT JOIN mt_players p ON p.uuid=a.actor LEFT JOIN"
                               + " mt_players t ON t.uuid=a.target LEFT JOIN mt_titles d ON"
                               + " d.id=a.title";
                       Object[] values = {
-                        action, action, player, player, title, title, query, query
+                        action,
+                        action,
+                        player,
+                        player,
+                        title,
+                        title,
+                        query,
+                        query,
+                        globalMatches,
+                        globalMatches
                       };
                       // Category totals cover this player/title scope, independently of search,
                       // selected action, and pagination. Hidden recovery audits stay protected.
                       List<Long> categoryCounts;
-                      try (var stmt = tx.connection.prepareStatement(
-                          "SELECT COUNT(*), COALESCE(SUM(a.action IN ('GRANT','REVOKE')),0),"
-                              + " COALESCE(SUM(a.action IN ('TITLE_SAVE','TITLE_DELETE','RELOAD')),0)"
-                              + " FROM mt_audit a WHERE NOT EXISTS (SELECT 1 FROM mt_audit_hidden h"
-                              + " WHERE h.audit_id=a.id) AND (?='' OR a.target=?) AND (?='' OR a.title=?)")) {
-                        stmt.setString(1, player); stmt.setString(2, player);
-                        stmt.setString(3, title); stmt.setString(4, title);
+                      try (var stmt =
+                          tx.connection.prepareStatement(
+                              "SELECT COUNT(*), COALESCE(SUM(a.action IN ('GRANT','REVOKE')),0),"
+                                  + " COALESCE(SUM(a.action IN"
+                                  + " ('TITLE_SAVE','TITLE_DELETE','RELOAD')),0) FROM mt_audit a"
+                                  + " WHERE NOT EXISTS (SELECT 1 FROM mt_audit_hidden h WHERE"
+                                  + " h.audit_id=a.id) AND (?='' OR a.target=?) AND (?='' OR"
+                                  + " a.title=?)")) {
+                        stmt.setString(1, player);
+                        stmt.setString(2, player);
+                        stmt.setString(3, title);
+                        stmt.setString(4, title);
                         try (var rs = stmt.executeQuery()) {
                           rs.next();
                           categoryCounts = List.of(rs.getLong(1), rs.getLong(2), rs.getLong(3));
@@ -591,8 +810,8 @@ public final class TitleService implements AutoCloseable {
                                   + where
                                   + " ORDER BY a.at_ms DESC, a.id DESC LIMIT ? OFFSET ?")) {
                         for (int i = 0; i < values.length; i++) stmt.setObject(i + 1, values[i]);
-                        stmt.setInt(9, size);
-                        stmt.setLong(10, (long) actual * size);
+                        stmt.setInt(values.length + 1, size);
+                        stmt.setLong(values.length + 2, (long) actual * size);
                         try (var rs = stmt.executeQuery()) {
                           while (rs.next())
                             rows.add(
@@ -606,20 +825,21 @@ public final class TitleService implements AutoCloseable {
                                     rs.getString("reason")));
                         }
                       }
-                      return new HistoryPage(List.copyOf(rows), total, actual, size, categoryCounts);
+                      return new HistoryPage(
+                          List.copyOf(rows), total, actual, size, categoryCounts);
                     })
                 .result());
   }
 
   public CompletableFuture<Void> migrateIdentity(Actor actor, UUID from, UUID to) {
-    if(remote!=null)return remoteCall("migrateIdentity", Void.class, actor, from, to);
+    if (remote != null) return remoteCall("migrateIdentity", Void.class, actor, from, to);
 
     return write(
         tx -> {
           if (!actor.console) throw new SecurityException("身份迁移仅允许控制台");
           Snapshot s = tx.snapshot();
-          known(s, from);
-          known(s, to);
+          known(tx, s, from);
+          known(tx, s, to);
           if (from.equals(to)) throw new IllegalArgumentException("源与目标相同");
           if (s.owned().values().stream().anyMatch(o -> o.player().equals(to))
               || s.receipts().values().stream().anyMatch(r -> r.player().equals(to))
@@ -650,7 +870,12 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<List<ChangeJournal.View>> changes(Actor actor, long audit) {
-    if(remote!=null)return remoteCall("changes", new com.google.gson.reflect.TypeToken<List<ChangeJournal.View>>(){}.getType(), actor, audit);
+    if (remote != null)
+      return remoteCall(
+          "changes",
+          new com.google.gson.reflect.TypeToken<List<ChangeJournal.View>>() {}.getType(),
+          actor,
+          audit);
 
     return background(
         () ->
@@ -685,7 +910,7 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<Void> undo(Actor actor, long change) {
-    if(remote!=null)return remoteCall("undo", Void.class, actor, change);
+    if (remote != null) return remoteCall("undo", Void.class, actor, change);
 
     return write(
         tx -> {
@@ -726,17 +951,23 @@ public final class TitleService implements AutoCloseable {
       int receipts,
       int history,
       boolean avatar,
+      boolean managed,
       String stamp) {}
 
   private record DeleteData(DeletePreview preview, List<Long> history, JsonElement avatar) {}
 
   private DeleteData deletion(Database.Tx tx, Actor actor, UUID id) throws Exception {
-    Snapshot s = tx.snapshot();
+    Snapshot s = project(tx.snapshot());
     requireAdmin(s, actor);
-    known(s, id);
+    if (!s.players().containsKey(id)) throw new IllegalArgumentException("玩家未登记: " + id);
     if (s.admins().contains(id))
       throw new IllegalStateException("此玩家仍有管理授权，本入口不删除网页账号或管理身份；请先在控制台处理授权");
-    if (online.test(id)) throw new IllegalStateException("玩家当前在线，请先离线，再清除资料");
+    boolean activeAdmission = false;
+    if (managed()) {
+      JsonObject context = platform("profiles.loginContext", id);
+      activeAdmission = context.has("admitted") && context.get("admitted").getAsBoolean();
+    }
+    if (online.test(id) || activeAdmission) throw new IllegalStateException("玩家当前在线，请先离线，再清除资料");
     Profile p = s.players().get(id);
     var owned =
         s.owned().values().stream()
@@ -759,7 +990,7 @@ public final class TitleService implements AutoCloseable {
         while (r.next()) history.add(r.getLong(1));
       }
     }
-    JsonElement avatar = assets.read(id);
+    JsonElement avatar = managed() ? JsonNull.INSTANCE : assets.read(id);
     Set<String> referenced = new TreeSet<>();
     owned.forEach(o -> referenced.add(o.title()));
     receipts.forEach(r -> referenced.add(r.title()));
@@ -786,20 +1017,22 @@ public final class TitleService implements AutoCloseable {
             receipts.size(),
             history.size(),
             !avatar.isJsonNull(),
+            managed(),
             stamp),
         history,
         avatar);
   }
 
   public CompletableFuture<DeletePreview> deletePreview(Actor actor, UUID id) {
-    if(remote!=null)return remoteCall("deletePreview", DeletePreview.class, actor, id);
+    if (remote != null) return remoteCall("deletePreview", DeletePreview.class, actor, id);
 
     return background(() -> db.transaction(tx -> deletion(tx, actor, id).preview()).result());
   }
 
   public CompletableFuture<Void> deletePlayer(
       Actor actor, UUID id, String stamp, String confirmName) {
-    if(remote!=null)return remoteCall("deletePlayer", Void.class, actor, id, stamp, confirmName);
+    if (remote != null)
+      return remoteCall("deletePlayer", Void.class, actor, id, stamp, confirmName);
 
     return write(
         tx -> {
@@ -820,16 +1053,22 @@ public final class TitleService implements AutoCloseable {
           tx.sql("DELETE FROM mt_owned WHERE player=?", id.toString());
           tx.sql("DELETE FROM mt_receipts WHERE player=?", id.toString());
           tx.sql("DELETE FROM mt_players WHERE uuid=?", id.toString());
-          tx.rollbackHooks.add(() -> assets.playerPresent(id, true));
-          tx.rollbackHooks.add(assets.swap(id, data.avatar(), JsonNull.INSTANCE));
-          extra.add(new ChangeJournal.Delta("V|" + id, data.avatar(), JsonNull.INSTANCE));
+          if (!managed()) {
+            tx.rollbackHooks.add(() -> assets.playerPresent(id, true));
+            tx.rollbackHooks.add(assets.swap(id, data.avatar(), JsonNull.INSTANCE));
+            extra.add(new ChangeJournal.Delta("V|" + id, data.avatar(), JsonNull.INSTANCE));
+          }
           long audit =
               tx.audit(
                   actor.auditName(),
                   "PLAYER_DELETE",
                   id.toString(),
                   "",
-                  "清除 " + data.preview().name() + " 的玩家档案、称号、领奖、头像及相关历史；保留受保护的恢复记录");
+                  "清除 "
+                      + data.preview().name()
+                      + (managed()
+                          ? " 的称号、领奖和相关历史；保留全局身份、头像与受保护的恢复记录"
+                          : " 的玩家档案、称号、领奖、头像及相关历史；保留受保护的恢复记录"));
           var changes = new ArrayList<>(ChangeJournal.diff(before, tx.snapshot()));
           changes.addAll(extra);
           tx.customJournal = true;
@@ -845,7 +1084,7 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<Backup.Archive> export(Actor actor) {
-    if(remote!=null)return remoteCall("export", Backup.Archive.class, actor);
+    if (remote != null) return remoteCall("export", Backup.Archive.class, actor);
 
     return background(
         () ->
@@ -858,7 +1097,7 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<String> importPreview(Actor actor, Backup.Archive archive) {
-    if(remote!=null)return remoteCall("importPreview", String.class, actor, archive);
+    if (remote != null) return remoteCall("importPreview", String.class, actor, archive);
 
     Backup.validate(archive);
     return background(
@@ -873,7 +1112,7 @@ public final class TitleService implements AutoCloseable {
   }
 
   public CompletableFuture<Void> restoreEmpty(Actor actor, Backup.Archive archive) {
-    if(remote!=null)return remoteCall("restoreEmpty", Void.class, actor, archive);
+    if (remote != null) return remoteCall("restoreEmpty", Void.class, actor, archive);
 
     Backup.validate(archive);
     return write(
@@ -894,8 +1133,18 @@ public final class TitleService implements AutoCloseable {
     return result;
   }
 
-  private static void known(Snapshot s, UUID id) {
-    if (!s.players().containsKey(id)) throw new IllegalArgumentException("玩家未登记: " + id);
+  private void known(Database.Tx tx, Snapshot s, UUID id) throws SQLException {
+    if (managed()) {
+      Profile p = globalProfile(id);
+      // Materialize only for an actual business operation, without login/reward side effects.
+      tx.sql(
+          "INSERT INTO mt_players(uuid,name,joined_at,last_seen) VALUES(?,?,?,?)"
+              + " ON DUPLICATE KEY UPDATE name=VALUES(name),last_seen=VALUES(last_seen)",
+          id.toString(),
+          p.name(),
+          p.joinedAt(),
+          p.lastSeen());
+    } else if (!s.players().containsKey(id)) throw new IllegalArgumentException("玩家未登记: " + id);
   }
 
   private static Title definition(Snapshot s, String id) {

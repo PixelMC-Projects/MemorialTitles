@@ -7,7 +7,7 @@ buildscript {
     dependencies { classpath 'net.minecraftforge.gradle:ForgeGradle:6.0.54' }
 }
 apply plugin: 'net.minecraftforge.gradle'
-version = '0.4.2-dev'
+version = '0.5.0-dev'
 group = 'cn.pixelmc.memorialtitles'
 base { archivesName = 'memorialtitles-forge-1.20.1' }
 java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
@@ -223,4 +223,11 @@ tasks.withType(Jar).configureEach {
 tasks.named('processResources').configure {
     inputs.property 'modVersion', project.version
     filesMatching('META-INF/mods.toml') { expand(version: project.version) }
+}
+
+// Exercises the Manager hook against a disposable real database, including selective recovery.
+tasks.register('unifiedPlatformIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.UnifiedPlatformIntegrationSuite'
 }

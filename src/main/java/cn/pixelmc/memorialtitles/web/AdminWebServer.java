@@ -25,12 +25,35 @@ public final class AdminWebServer implements AutoCloseable {
     CompletableFuture<Void> reload(TitleService.Actor actor);
 
     default void requestAvatar(UUID id, String nonce) {}
-    default boolean platformAvailable() { return false; }
-    default boolean bridgeAuthority(HttpExchange e,String path) { return false; }
-    default boolean platformAdmin(UUID id) { return false; }
-    default boolean publicRoute(HttpExchange e, String path) throws Exception { return false; }
-    default int httpThreads() { return 4; }
-    default boolean adminRoute(HttpExchange e, String path, TitleService.Actor actor, java.util.function.BooleanSupplier authorized) throws Exception { return false; }
+
+    default boolean platformAvailable() {
+      return false;
+    }
+
+    default boolean bridgeAuthority(HttpExchange e, String path) {
+      return false;
+    }
+
+    default boolean platformAdmin(UUID id) {
+      return false;
+    }
+
+    default boolean publicRoute(HttpExchange e, String path) throws Exception {
+      return false;
+    }
+
+    default int httpThreads() {
+      return 4;
+    }
+
+    default boolean adminRoute(
+        HttpExchange e,
+        String path,
+        TitleService.Actor actor,
+        java.util.function.BooleanSupplier authorized)
+        throws Exception {
+      return false;
+    }
   }
 
   private record Session(
@@ -85,8 +108,8 @@ public final class AdminWebServer implements AutoCloseable {
     http = HttpServer.create(new InetSocketAddress(config.bind(), config.port()), 32);
     executor =
         new ThreadPoolExecutor(
-            Math.max(4,Math.min(16,host.httpThreads())),
-            Math.max(4,Math.min(16,host.httpThreads())),
+            Math.max(4, Math.min(16, host.httpThreads())),
+            Math.max(4, Math.min(16, host.httpThreads())),
             0,
             TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(64),
@@ -99,6 +122,27 @@ public final class AdminWebServer implements AutoCloseable {
     http.setExecutor(executor);
     http.createContext("/", this::handle);
     http.start();
+  }
+
+  AdminWebServer(
+      TitleService service, Host host, java.util.function.ToLongFunction<UUID> avatarVersion) {
+    this.service = service;
+    this.host = host;
+    this.platformAvatarVersion = avatarVersion;
+    this.config = null;
+    this.backupFolder = null;
+    this.accounts = null;
+    this.avatars = null;
+    this.http = null;
+    this.executor = null;
+  }
+
+  private java.util.function.ToLongFunction<UUID> platformAvatarVersion;
+
+  private long avatarVersion(UUID player) {
+    return platformAvatarVersion == null
+        ? avatars.version(player)
+        : platformAvatarVersion.applyAsLong(player);
   }
 
   public int port() {
@@ -142,8 +186,8 @@ public final class AdminWebServer implements AutoCloseable {
     try {
       headers(exchange);
       String path = exchange.getRequestURI().getPath();
-      if (!validHost(exchange.getRequestHeaders().getFirst("Host")) && !host.bridgeAuthority(exchange,path))
-        throw new Failure(403, "访问地址未允许，请使用服务器IP和端口");
+      if (!validHost(exchange.getRequestHeaders().getFirst("Host"))
+          && !host.bridgeAuthority(exchange, path)) throw new Failure(403, "访问地址未允许，请使用服务器IP和端口");
       if (host.publicRoute(exchange, path)) return;
       if (path.startsWith("/api/")) {
         rate("api:" + exchange.getRemoteAddress().getAddress().getHostAddress(), 600);
@@ -185,7 +229,9 @@ public final class AdminWebServer implements AutoCloseable {
                     : cause instanceof IllegalArgumentException
                             || cause instanceof JsonParseException
                         ? 400
-                        : cause instanceof TimeoutException ? 504 : cause instanceof java.sql.SQLException ? 503 : 409;
+                        : cause instanceof TimeoutException
+                            ? 504
+                            : cause instanceof java.sql.SQLException ? 503 : 409;
         String message =
             cause instanceof java.sql.SQLException
                 ? "数据库连接或事务失败，请检查服务端数据库状态"
@@ -201,6 +247,35 @@ public final class AdminWebServer implements AutoCloseable {
     } finally {
       exchange.close();
     }
+  }
+
+  static void moduleFailure(HttpExchange exchange, Throwable error) throws IOException {
+    Throwable cause = error;
+    while (cause.getCause() != null
+        && (cause instanceof CompletionException
+            || cause instanceof ExecutionException
+            || cause instanceof java.lang.reflect.InvocationTargetException))
+      cause = cause.getCause();
+    int status =
+        cause instanceof Failure f
+            ? f.status
+            : cause instanceof SecurityException
+                ? 403
+                : cause instanceof IllegalArgumentException || cause instanceof JsonParseException
+                    ? 400
+                    : cause instanceof TimeoutException
+                        ? 504
+                        : cause instanceof java.sql.SQLException ? 503 : 409;
+    String message =
+        cause instanceof java.sql.SQLException
+            ? "数据库连接或事务失败，请检查服务端数据库状态"
+            : cause instanceof Failure
+                    || cause instanceof IllegalArgumentException
+                    || cause instanceof IllegalStateException
+                    || cause instanceof SecurityException
+                ? Objects.toString(cause.getMessage(), "请求无效")
+                : "操作失败，请查看服务端日志或稍后重试";
+    json(exchange, status, Map.of("error", message));
   }
 
   private void headers(HttpExchange e) {
@@ -245,7 +320,9 @@ public final class AdminWebServer implements AutoCloseable {
       JsonObject body = body(e);
       AccountStore.Account account =
           accounts.verify(text(body, "username", 64), text(body, "password", 256));
-      if (account == null || !(host.platformAdmin(account.player()) || service.snapshot().admins().contains(account.player())))
+      if (account == null
+          || !(host.platformAdmin(account.player())
+              || service.snapshot().admins().contains(account.player())))
         throw new Failure(401, "用户名、密码或管理授权无效");
       long now = System.currentTimeMillis();
       sessions.entrySet().removeIf(entry -> entry.getValue().expires() < now);
@@ -279,9 +356,10 @@ public final class AdminWebServer implements AutoCloseable {
     AccountStore.Account account = accounts.get(session.username());
     if (account == null || account.version() != session.accountVersion())
       throw new Failure(401, "密码已变更或账号已移除，请重新登录");
-    TitleService.Actor actor = host.platformAdmin(session.player())
-        ? new TitleService.Actor(session.player(),session.username(),false,true)
-        : TitleService.Actor.player(session.player());
+    TitleService.Actor actor =
+        host.platformAdmin(session.player())
+            ? new TitleService.Actor(session.player(), session.username(), false, true)
+            : TitleService.Actor.player(session.player());
     TitleService.requireAdmin(service.snapshot(), actor);
     Snapshot s = service.snapshot();
     Map<String, String> q = query(e);
@@ -299,12 +377,29 @@ public final class AdminWebServer implements AutoCloseable {
       json(e, 200, Map.of("ok", true));
       return;
     }
-    if (host.adminRoute(e, path, actor, () -> {
-      AccountStore.Account current=accounts.get(session.username());
-      return current!=null && current.version()==session.accountVersion()
-          && session.expires()>System.currentTimeMillis() && sessions.containsValue(session)
-          && (host.platformAdmin(session.player()) || service.snapshot().admins().contains(session.player()));
-    })) return;
+    if (host.adminRoute(
+        e,
+        path,
+        actor,
+        () -> {
+          AccountStore.Account current = accounts.get(session.username());
+          return current != null
+              && current.version() == session.accountVersion()
+              && session.expires() > System.currentTimeMillis()
+              && sessions.containsValue(session)
+              && (host.platformAdmin(session.player())
+                  || service.snapshot().admins().contains(session.player()));
+        })) return;
+    moduleApi(e, path, actor);
+  }
+
+  /** Invoked only after the platform authenticates the actor and validates CSRF. */
+  void moduleApi(HttpExchange e, String path, TitleService.Actor actor) throws Exception {
+    TitleService.requireAdmin(service.snapshot(), actor);
+    boolean post = e.getRequestMethod().equals("POST");
+    if (!post && !e.getRequestMethod().equals("GET")) throw new Failure(405, "不支持的请求方法");
+    Snapshot s = service.snapshot();
+    Map<String, String> q = query(e);
     if (path.equals("/api/state") && !post) {
       Map<String, Long> holders = new HashMap<>();
       s.owned().values().forEach(o -> holders.merge(o.title(), 1L, Long::sum));
@@ -354,19 +449,33 @@ public final class AdminWebServer implements AutoCloseable {
       if (!s.titles().containsKey(title)) throw new Failure(404, "称号已不存在，请刷新称号档案");
       var collator = java.text.Collator.getInstance(Locale.CHINA);
       collator.setStrength(java.text.Collator.PRIMARY);
-      List<TitleHolder> all = s.owned().values().stream()
-          .filter(o -> o.title().equals(title))
-          .map(o -> {
-            Profile p = s.players().get(o.player());
-            return new TitleHolder(p.id(), p.name(), o.acquiredAt(), avatars.version(p.id()));
-          })
-          .sorted(Comparator.comparing(TitleHolder::name, collator)
-              .thenComparing(TitleHolder::name).thenComparing(TitleHolder::id))
-          .toList();
+      List<TitleHolder> all =
+          s.owned().values().stream()
+              .filter(o -> o.title().equals(title))
+              .map(
+                  o -> {
+                    Profile p = s.players().get(o.player());
+                    return new TitleHolder(p.id(), p.name(), o.acquiredAt(), avatarVersion(p.id()));
+                  })
+              .sorted(
+                  Comparator.comparing(TitleHolder::name, collator)
+                      .thenComparing(TitleHolder::name)
+                      .thenComparing(TitleHolder::id))
+              .toList();
       int size = integer(q, "size", 20, 1, 100),
           page = Math.min(integer(q, "page", 0, 0, 100000), Math.max(0, (all.size() - 1) / size));
-      json(e, 200, Map.of("rows", all.subList(page * size, Math.min(all.size(), (page + 1) * size)),
-          "total", all.size(), "page", page, "size", size));
+      json(
+          e,
+          200,
+          Map.of(
+              "rows",
+              all.subList(page * size, Math.min(all.size(), (page + 1) * size)),
+              "total",
+              all.size(),
+              "page",
+              page,
+              "size",
+              size));
       return;
     }
     if (path.equals("/api/title-delete/preview") && post) {
@@ -376,8 +485,10 @@ public final class AdminWebServer implements AutoCloseable {
     }
     if (path.equals("/api/title-delete/confirm") && post) {
       JsonObject b = body(e);
-      int removed = await(service.deleteTitle(actor, text(b, "title", 64), text(b, "stamp", 64),
-          text(b, "confirmName", 160)));
+      int removed =
+          await(
+              service.deleteTitle(
+                  actor, text(b, "title", 64), text(b, "stamp", 64), text(b, "confirmName", 160)));
       host.mirror();
       json(e, 200, Map.of("ok", true, "removedHolders", removed));
       return;
@@ -393,8 +504,11 @@ public final class AdminWebServer implements AutoCloseable {
     if (path.equals("/api/players") && !post) {
       String search = q.getOrDefault("q", "").toLowerCase(Locale.ROOT);
       if (search.length() > 128) throw new IllegalArgumentException("搜索文字过长");
-      String presence = q.getOrDefault("presence", q.getOrDefault("online", "false").equals("true") ? "online" : "all");
-      String sort = q.getOrDefault("sort", "status"), direction = q.getOrDefault("direction", "asc");
+      String presence =
+          q.getOrDefault(
+              "presence", q.getOrDefault("online", "false").equals("true") ? "online" : "all");
+      String sort = q.getOrDefault("sort", "status"),
+          direction = q.getOrDefault("direction", "asc");
       if (!Set.of("all", "online", "offline").contains(presence)
           || !Set.of("status", "name", "ownedCount", "equipped", "lastSeen").contains(sort)
           || !Set.of("asc", "desc").contains(direction))
@@ -407,20 +521,37 @@ public final class AdminWebServer implements AutoCloseable {
       Comparator<PlayerRow> byName = (a, b) -> compareNames(a.name(), b.name(), collator);
       byName = byName.thenComparing(PlayerRow::name).thenComparing(PlayerRow::id);
       boolean descending = direction.equals("desc");
-      Comparator<PlayerRow> order = switch (sort) {
-        case "name" -> (a, b) -> compareNames(a.name(), b.name(), collator) * (descending ? -1 : 1);
-        case "ownedCount" -> Comparator.comparingLong(PlayerRow::ownedCount);
-        case "lastSeen" -> (a, b) -> compareOptional(a.lastSeen() <= 0 ? null : a.lastSeen(), b.lastSeen() <= 0 ? null : b.lastSeen(), descending);
-        case "equipped" -> (a, b) -> compareTitleNames(s.titles().get(a.equipped()), s.titles().get(b.equipped()), collator, descending);
-        default -> Comparator.comparing(PlayerRow::online).reversed();
-      };
-      if (descending && (sort.equals("ownedCount") || sort.equals("status"))) order = order.reversed();
+      Comparator<PlayerRow> order =
+          switch (sort) {
+            case "name" ->
+                (a, b) -> compareNames(a.name(), b.name(), collator) * (descending ? -1 : 1);
+            case "ownedCount" -> Comparator.comparingLong(PlayerRow::ownedCount);
+            case "lastSeen" ->
+                (a, b) ->
+                    compareOptional(
+                        a.lastSeen() <= 0 ? null : a.lastSeen(),
+                        b.lastSeen() <= 0 ? null : b.lastSeen(),
+                        descending);
+            case "equipped" ->
+                (a, b) ->
+                    compareTitleNames(
+                        s.titles().get(a.equipped()),
+                        s.titles().get(b.equipped()),
+                        collator,
+                        descending);
+            default -> Comparator.comparing(PlayerRow::online).reversed();
+          };
+      if (descending && (sort.equals("ownedCount") || sort.equals("status")))
+        order = order.reversed();
       order = order.thenComparing(byName);
       long onlineCount = s.players().keySet().stream().filter(online::contains).count();
       List<PlayerRow> all =
           s.players().values().stream()
               .filter(p -> (p.name() + p.id()).toLowerCase(Locale.ROOT).contains(search))
-              .filter(p -> presence.equals("all") || online.contains(p.id()) == presence.equals("online"))
+              .filter(
+                  p ->
+                      presence.equals("all")
+                          || online.contains(p.id()) == presence.equals("online"))
               .map(
                   p ->
                       new PlayerRow(
@@ -432,7 +563,7 @@ public final class AdminWebServer implements AutoCloseable {
                           s.equipped().getOrDefault(p.id(), ""),
                           online.contains(p.id()),
                           s.admins().contains(p.id()),
-                          avatars.version(p.id())))
+                          avatarVersion(p.id())))
               .sorted(order)
               .toList();
       int size = integer(q, "size", 20, 1, 100),
@@ -450,13 +581,19 @@ public final class AdminWebServer implements AutoCloseable {
               "size",
               size,
               "presenceCounts",
-              Map.of("all", s.players().size(), "online", onlineCount, "offline", s.players().size() - onlineCount)));
+              Map.of(
+                  "all",
+                  s.players().size(),
+                  "online",
+                  onlineCount,
+                  "offline",
+                  s.players().size() - onlineCount)));
       return;
     }
     if (path.equals("/api/player-delete/preview") && post) {
       JsonObject b = body(e);
       UUID id = UUID.fromString(text(b, "player", 36));
-      if (accounts.list().stream().anyMatch(a -> a.endsWith(" → " + id)))
+      if (accounts != null && accounts.list().stream().anyMatch(a -> a.endsWith(" → " + id)))
         throw new Failure(409, "该玩家关联网页账号，不属于本次玩家资料清理范围");
       json(e, 200, await(service.deletePreview(actor, id)));
       return;
@@ -464,7 +601,7 @@ public final class AdminWebServer implements AutoCloseable {
     if (path.equals("/api/player-delete/confirm") && post) {
       JsonObject b = body(e);
       UUID id = UUID.fromString(text(b, "player", 36));
-      if (accounts.list().stream().anyMatch(a -> a.endsWith(" → " + id)))
+      if (accounts != null && accounts.list().stream().anyMatch(a -> a.endsWith(" → " + id)))
         throw new Failure(409, "该玩家关联网页账号，不能从玩家资料入口清除");
       await(service.deletePlayer(actor, id, text(b, "stamp", 64), text(b, "confirmName", 64)));
       json(e, 200, Map.of("ok", true));
@@ -481,13 +618,13 @@ public final class AdminWebServer implements AutoCloseable {
               "profile",
               profile,
               "owned",
-              s.collection(id, session.player(), true),
+              s.collection(id, actor.player(), true),
               "equipped",
               s.equipped().getOrDefault(id, ""),
               "online",
               host.online().contains(id),
               "avatarVersion",
-              avatars.version(id),
+              avatarVersion(id),
               "receipts",
               s.receipts().values().stream().filter(v -> v.player().equals(id)).toList()));
       return;
@@ -691,8 +828,10 @@ public final class AdminWebServer implements AutoCloseable {
         s.players().size(),
         "online",
         host.online().size(),
+        "managed",
+        service.managed(),
         "version",
-        "0.4.2-dev");
+        "0.5.0-dev");
   }
 
   // Match the web console's pinyin/letter ordering, including natural numeric names.
@@ -701,13 +840,18 @@ public final class AdminWebServer implements AutoCloseable {
     while (i < a.length() && j < b.length()) {
       boolean digits = Character.isDigit(a.charAt(i)) && Character.isDigit(b.charAt(j));
       int ai = i + 1, bj = j + 1;
-      while (ai < a.length() && Character.isDigit(a.charAt(ai)) == Character.isDigit(a.charAt(i))) ai++;
-      while (bj < b.length() && Character.isDigit(b.charAt(bj)) == Character.isDigit(b.charAt(j))) bj++;
-      int comparison = digits
-          ? new java.math.BigInteger(a.substring(i, ai)).compareTo(new java.math.BigInteger(b.substring(j, bj)))
-          : collator.compare(a.substring(i, ai), b.substring(j, bj));
+      while (ai < a.length() && Character.isDigit(a.charAt(ai)) == Character.isDigit(a.charAt(i)))
+        ai++;
+      while (bj < b.length() && Character.isDigit(b.charAt(bj)) == Character.isDigit(b.charAt(j)))
+        bj++;
+      int comparison =
+          digits
+              ? new java.math.BigInteger(a.substring(i, ai))
+                  .compareTo(new java.math.BigInteger(b.substring(j, bj)))
+              : collator.compare(a.substring(i, ai), b.substring(j, bj));
       if (comparison != 0) return comparison;
-      i = ai; j = bj;
+      i = ai;
+      j = bj;
     }
     return Integer.compare(a.length() - i, b.length() - j);
   }
@@ -717,9 +861,11 @@ public final class AdminWebServer implements AutoCloseable {
     return a.compareTo(b) * (descending ? -1 : 1);
   }
 
-  private static int compareTitleNames(Title a, Title b, java.text.Collator collator, boolean descending) {
+  private static int compareTitleNames(
+      Title a, Title b, java.text.Collator collator, boolean descending) {
     String left = a == null ? "" : a.name().plain(), right = b == null ? "" : b.name().plain();
-    if (left.isEmpty() || right.isEmpty()) return left.isEmpty() == right.isEmpty() ? 0 : left.isEmpty() ? 1 : -1;
+    if (left.isEmpty() || right.isEmpty())
+      return left.isEmpty() == right.isEmpty() ? 0 : left.isEmpty() ? 1 : -1;
     return compareNames(left, right, collator) * (descending ? -1 : 1);
   }
 
@@ -911,9 +1057,9 @@ public final class AdminWebServer implements AutoCloseable {
 
   @Override
   public void close() {
-    http.stop(1);
-    executor.shutdownNow();
-    avatars.close();
+    if (http != null) http.stop(1);
+    if (executor != null) executor.shutdownNow();
+    if (avatars != null) avatars.close();
     sessions.clear();
   }
 }
