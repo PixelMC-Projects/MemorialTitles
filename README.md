@@ -35,7 +35,7 @@
 
 升级至 **0.5.0-dev** 前先完整备份，正常关服后同步替换服务端与客户端 JAR。独立模式保留原配置和数据库即可。旧 Manager 分库部署需先迁移到**新的统一数据库**，核对玩家、收藏、领奖、通知与撤回记录后再切换配置；保留原库以便回滚，不能只改数据库地址。先更新配套网页服务，再更新游戏模组。本版本要求新旧两端一起升级。
 
-Manager 模式只在可信的首次全局登录时发放首登奖励，迁移目录或旧玩家首次使用称号功能不会补发。称号页的资料清理只处理称号数据，保留全局身份、头像与其他插件资料；操作仍可按冲突检查逐项撤回。
+Manager 模式只在可信的真实登录时检查奖励，每个奖励称号凭领奖记录领取一次；更换奖励后，老玩家下次登录也可领取。迁移目录和读取页面不会发放奖励。称号页的资料清理只处理称号数据，保留全局身份、头像与其他插件资料；操作仍可按冲突检查逐项撤回。
 
 
 ## English
@@ -71,7 +71,7 @@ For **PixelMC Manager 0.6.0+**, install the matching Forge mod and independent w
 
 Before upgrading to **0.5.0-dev**, make a complete backup, stop normally and replace the server and client JARs together. Standalone deployments retain their existing configuration and database. Legacy Manager deployments with separate databases must migrate into a **new unified database**, verify player, collection, receipt, notification and undo records, then switch configuration. Keep source databases for rollback; changing only the database URL is insufficient. Update the matching web service before the game mods.
 
-In managed mode, first-join rewards require a trusted first global login. Directory migration and an existing player's first use of Titles never award them. Title-profile cleanup affects title records while retaining the global identity, avatar and other modules; selective undo continues to check conflicts.
+In managed mode, rewards require a trusted real login and can be claimed once per reward title. Existing players may claim a newly selected reward on their next login. Directory migration and page reads never issue rewards. Title-profile cleanup affects title records while retaining the global identity, avatar and other modules; selective undo continues to check conflicts.
 
 
 ### Configuration example / 配置示例

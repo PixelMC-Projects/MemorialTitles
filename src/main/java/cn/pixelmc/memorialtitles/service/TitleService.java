@@ -321,14 +321,9 @@ public final class TitleService implements AutoCloseable {
           Snapshot s = tx.snapshot();
           String reward = s.settings().reward();
           Title t = s.titles().get(reward);
-          boolean eligible =
-              context == null
-                  || (context.has("firstGlobalLogin")
-                      && context.get("firstGlobalLogin").getAsBoolean());
-          if (eligible
-              && t != null
-              && t.issuable()
-              && !s.receipts().containsKey(new Key(id, reward))) {
+          // Existing policy is once per configured reward title, including old players after a
+          // reward change. Only this trusted login path may issue it; directory imports never do.
+          if (t != null && t.issuable() && !s.receipts().containsKey(new Key(id, reward))) {
             grant(tx, s, Actor.api("first-login"), id, t, "首次登录奖励");
             tx.sql(
                 "INSERT INTO mt_receipts(player,title,claimed_at) VALUES(?,?,?)",

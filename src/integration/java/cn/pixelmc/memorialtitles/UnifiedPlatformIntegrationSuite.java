@@ -149,18 +149,21 @@ public final class UnifiedPlatformIntegrationSuite {
       check(
           directoryCalls.get() == before,
           "frequent snapshot reads reuse the bounded one-second identity cache");
+      check(
+          count(db, "mt_receipts") == 0 && count(db, "mt_owned") == 0,
+          "directory imports and reads never issue the configured reward to known players");
       await(service.login(old, "UntrustedSuppliedName"));
       check(
-          service.snapshot().ownership(old, "reward") == null && count(db, "mt_receipts") == 0,
-          "existing global player is not treated as a new player when Titles first sees a login");
+          service.snapshot().ownership(old, "reward") != null && count(db, "mt_receipts") == 1,
+          "trusted login preserves the existing per-reward receipt policy for old global players");
       check(
           service.snapshot().players().get(old).name().equals("Renamed"),
           "login never replaces trusted name with transport argument");
       await(service.login(fresh, "Fresh"));
       await(service.login(fresh, "Fresh"));
       check(
-          service.snapshot().ownership(fresh, "reward") != null && count(db, "mt_receipts") == 1,
-          "trusted first global login awards exactly once independent of wall-clock guesses");
+          service.snapshot().ownership(fresh, "reward") != null && count(db, "mt_receipts") == 2,
+          "trusted login awards exactly once per reward title independent of wall-clock guesses");
       check(
           await(service.notifications(fresh)).size() == 1,
           "repeat login does not duplicate the reward notification");
@@ -175,9 +178,23 @@ public final class UnifiedPlatformIntegrationSuite {
               && count(db, "mt_players") == 2
               && service.snapshot().ownership(rejected, "reward") == null,
           "rejected admissions cannot materialize a player or receive a reward");
+      JsonObject forged = admission(true, false);
+      forged.addProperty("eventId", "");
+      contexts.put(rejected, forged);
+      denied = false;
+      try {
+        await(service.login(rejected, "Rejected"));
+      } catch (ExecutionException error) {
+        denied = true;
+      }
+      check(
+          denied
+              && count(db, "mt_players") == 2
+              && service.snapshot().ownership(rejected, "reward") == null,
+          "an admitted flag without a trusted login event cannot register or reward a player");
       await(service.grant(ADMIN, List.of(zero), "manual", "manual grant to directory-only player"));
       check(
-          service.snapshot().ownership(zero, "manual") != null && count(db, "mt_receipts") == 1,
+          service.snapshot().ownership(zero, "manual") != null && count(db, "mt_receipts") == 2,
           "manual grant materializes only its FK cache without login rewards or receipts");
       await(service.toggleDisplayPosition(zero, DisplayPosition.TAB));
       await(service.setUnequippedReminder(zero, false));
@@ -288,19 +305,47 @@ public final class UnifiedPlatformIntegrationSuite {
         contexts.put(zero, admission(true, false));
         await(service.login(zero, "Alpha"));
         check(
-            service.snapshot().ownership(zero, "reward") == null,
-            "cleanup and rejoin cannot reclassify an old player as a first login");
+            service.snapshot().ownership(zero, "reward") != null,
+            "an old player's actual admitted login may claim a configured reward with no receipt");
         check(
             TitlesPlatformAdapter.storageManifest().getAsJsonArray("tables").size() == 14,
             "manifest registers all durable title tables for unified backups");
       } finally {
         server.stop(0);
       }
+      await(service.saveTitle(ADMIN, title("reward_next"), 0));
+      Settings beforeRewardChange = service.snapshot().settings();
+      await(
+          service.settings(
+              ADMIN,
+              new Settings(
+                  "reward_next",
+                  beforeRewardChange.head(),
+                  beforeRewardChange.chat(),
+                  beforeRewardChange.tab(),
+                  beforeRewardChange.headScale(),
+                  beforeRewardChange.headOffset(),
+                  beforeRewardChange.chatPrefix(),
+                  beforeRewardChange.retentionDays())));
+      long receiptsBefore = count(db, "mt_receipts");
+      check(
+          service.snapshot().ownership(old, "reward_next") == null
+              && count(db, "mt_receipts") == receiptsBefore,
+          "changing reward settings and reading global profiles do not issue an immediate reward");
+      await(service.login(old, "Renamed"));
+      long acquired = service.snapshot().ownership(old, "reward_next").acquiredAt();
+      await(service.login(old, "Renamed"));
+      check(
+          service.snapshot().ownership(old, "reward_next") != null
+              && service.snapshot().ownership(old, "reward_next").acquiredAt() == acquired
+              && count(db, "mt_receipts") == receiptsBefore + 1,
+          "old global players receive a newly selected reward on their next trusted login exactly"
+              + " once");
       service.attachPlatform(null);
       UUID standalone = UUID.randomUUID();
       await(service.login(standalone, "Standalone"));
       check(
-          service.snapshot().ownership(standalone, "reward") != null,
+          service.snapshot().ownership(standalone, "reward_next") != null,
           "detached standalone mode retains its original first-participation reward behavior");
       System.out.println("PASS " + checks + " unified platform checks");
     } finally {
