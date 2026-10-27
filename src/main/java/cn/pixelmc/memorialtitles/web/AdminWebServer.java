@@ -402,7 +402,9 @@ public final class AdminWebServer implements AutoCloseable {
     Map<String, String> q = query(e);
     if (path.equals("/api/state") && !post) {
       Map<String, Long> holders = new HashMap<>();
-      s.owned().values().forEach(o -> holders.merge(o.title(), 1L, Long::sum));
+      s.owned().values().stream()
+          .filter(o -> s.players().containsKey(o.player()))
+          .forEach(o -> holders.merge(o.title(), 1L, Long::sum));
       json(
           e,
           200,
@@ -451,7 +453,7 @@ public final class AdminWebServer implements AutoCloseable {
       collator.setStrength(java.text.Collator.PRIMARY);
       List<TitleHolder> all =
           s.owned().values().stream()
-              .filter(o -> o.title().equals(title))
+              .filter(o -> o.title().equals(title) && s.players().containsKey(o.player()))
               .map(
                   o -> {
                     Profile p = s.players().get(o.player());

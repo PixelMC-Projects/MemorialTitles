@@ -211,6 +211,28 @@ public final class UnifiedPlatformIntegrationSuite {
               + " older");
       players.put(zero, identity(zero, "Alpha", 0));
 
+      UUID excluded = UUID.randomUUID();
+      db.transaction(
+          tx -> {
+            tx.sql(
+                "INSERT INTO mt_players(uuid,name,joined_at,last_seen) VALUES(?,?,0,0)",
+                excluded.toString(),
+                "alex");
+            tx.sql(
+                "INSERT INTO mt_owned(player,title,acquired_at,collection_public,display_public)"
+                    + " VALUES(?,?,123,FALSE,TRUE)",
+                excluded.toString(),
+                "manual");
+            return null;
+          });
+      await(service.reconnect());
+      check(
+          !service.snapshot().players().containsKey(excluded)
+              && db.read().players().containsKey(excluded)
+              && db.read().ownership(excluded, "manual") != null,
+          "platform-excluded legacy identities stay out of the player view while original ownership"
+              + " remains durable");
+
       TitlesPlatformAdapter adapter = new TitlesPlatformAdapter(service, platform);
       HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 4);
       server.createContext(
@@ -252,6 +274,38 @@ public final class UnifiedPlatformIntegrationSuite {
         check(
             list.statusCode() == 200 && roster.get("total").getAsInt() == 4,
             "managed HTTP list exposes the same complete global player roster");
+        var stateResponse =
+            http.send(
+                HttpRequest.newBuilder(URI.create(url + "/api/state"))
+                    .header("Authorization", "owner-session")
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        check(
+            stateResponse.statusCode() == 200
+                && json(stateResponse).getAsJsonObject("holderCounts").get("manual").getAsInt()
+                    == 1,
+            "title archive counts only globally visible holders without erasing excluded legacy"
+                + " ownership");
+        var holdersResponse =
+            http.send(
+                HttpRequest.newBuilder(URI.create(url + "/api/title-holders?title=manual"))
+                    .header("Authorization", "owner-session")
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        check(
+            holdersResponse.statusCode() == 200
+                && json(holdersResponse).get("total").getAsInt() == 1
+                && json(holdersResponse)
+                    .getAsJsonArray("rows")
+                    .get(0)
+                    .getAsJsonObject()
+                    .get("id")
+                    .getAsString()
+                    .equals(zero.toString()),
+            "holder HTTP projection safely skips raw owners missing a global profile instead of"
+                + " throwing a null dereference");
         check(
             roster.getAsJsonArray("rows").get(0).getAsJsonObject().get("avatarVersion").getAsInt()
                 == 91,

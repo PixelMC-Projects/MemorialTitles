@@ -109,9 +109,9 @@ public final class TitleService implements AutoCloseable {
 
   private Snapshot project(Snapshot source) {
     if (!managed()) return source;
-    // Legacy rows are FK/business caches, never the authority for current names or avatars.
-    Map<UUID, Profile> players = new HashMap<>(source.players());
-    players.putAll(directory());
+    // Legacy rows are FK/business caches. An identity excluded by Manager (for example a proven
+    // fake player) must not reappear through this cache; its business history remains untouched.
+    Map<UUID, Profile> players = directory();
     return new Snapshot(
         source.titles(),
         players,
