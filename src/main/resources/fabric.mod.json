@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "memorialtitles",
+  "version": "${version}",
+  "name": "MemorialTitles 纪念称号",
+  "description": "Collect memorable player titles, with standalone MariaDB or PixelMC Manager.",
+  "authors": [
+    "PixelMC"
+  ],
+  "license": "AGPL-3.0-only",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "cn.pixelmc.memorialtitles.MemorialTitles"
+    ],
+    "client": [
+      "cn.pixelmc.memorialtitles.client.ClientRuntime"
+    ]
+  },
+  "mixins": [
+    "memorialtitles.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.14",
+    "fabric-api": "*",
+    "minecraft": "1.20.1",
+    "java": ">=17"
+  },
+  "accessWidener": "memorialtitles.accesswidener"
+}

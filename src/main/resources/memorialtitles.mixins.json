@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "package": "cn.pixelmc.memorialtitles.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [
+    "ServerPlayerMixin"
+  ],
+  "client": [
+    "EntityRendererMixin",
+    "ChatListenerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

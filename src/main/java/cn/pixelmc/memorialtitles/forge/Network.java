@@ -12,53 +12,36 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.*;
-import net.minecraftforge.network.simple.SimpleChannel;
 
 public final class Network {
-  private static final SimpleChannel CHANNEL =
-      NetworkRegistry.newSimpleChannel(
-          new ResourceLocation(MemorialTitles.ID, "titles"), () -> "3", "3"::equals, "3"::equals);
+  public static final ResourceLocation REQUEST = new ResourceLocation(MemorialTitles.ID, "request");
+  public static final ResourceLocation RESPONSE = new ResourceLocation(MemorialTitles.ID, "response");
   private static final Map<UUID, long[]> RATE = new HashMap<>();
-
   public static void register() {
-    CHANNEL
-        .messageBuilder(Request.class, 0, NetworkDirection.PLAY_TO_SERVER)
-        .encoder((p, b) -> b.writeUtf(p.json, 32767))
-        .decoder(b -> new Request(b.readUtf(32767)))
-        .consumerMainThread(Network::handle)
-        .add();
-    CHANNEL
-        .messageBuilder(Response.class, 1, NetworkDirection.PLAY_TO_CLIENT)
-        .encoder((p, b) -> b.writeUtf(p.json, 262144))
-        .decoder(b -> new Response(b.readUtf(262144)))
-        .consumerMainThread(
-            (p, c) -> {
-              DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> ClientRuntime.receive(p.json));
-              c.get().setPacketHandled(true);
-            })
-        .add();
+    net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.registerGlobalReceiver(REQUEST,
+        (server, player, handler, buffer, sender) -> {
+          String json = buffer.readUtf(32767);
+          server.execute(() -> handle(new Request(json), player));
+        });
   }
-
   public record Request(String json) {}
-
   public record Response(String json) {}
-
   public static void request(String operation, JsonObject data) {
     data.addProperty("op", operation);
-    CHANNEL.sendToServer(new Request(JSON.toJson(data)));
+    net.minecraft.network.FriendlyByteBuf buffer = net.fabricmc.fabric.api.networking.v1.PacketByteBufs.create();
+    buffer.writeUtf(JSON.toJson(data), 32767);
+    net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(REQUEST, buffer);
   }
-
   public static void reply(ServerPlayer p, String kind, Object value) {
-    if (p.connection == null) return;
+    if (p.connection == null || !net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.canSend(p, RESPONSE)) return;
     JsonObject out = new JsonObject();
     out.addProperty("kind", kind);
     out.add("data", JSON.toJsonTree(value));
     String json = JSON.toJson(out);
     if (json.length() > 262144) throw new IllegalArgumentException("响应太大，请缩小筛选范围");
-    CHANNEL.send(PacketDistributor.PLAYER.with(() -> p), new Response(json));
+    var buffer = net.fabricmc.fabric.api.networking.v1.PacketByteBufs.create();
+    buffer.writeUtf(json, 262144);
+    net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(p, RESPONSE, buffer);
   }
 
   public static void admin(ServerPlayer p) {
@@ -105,9 +88,7 @@ public final class Network {
     return ++state[1] <= 12;
   }
 
-  private static void handle(Request req, Supplier<NetworkEvent.Context> ctx) {
-    ctx.get().setPacketHandled(true);
-    ServerPlayer p = ctx.get().getSender();
+  private static void handle(Request req, ServerPlayer p) {
     if (p == null || !rate(p.getUUID())) return;
     ServerRuntime r = ServerRuntime.current;
     if (r == null || r.service == null) return;

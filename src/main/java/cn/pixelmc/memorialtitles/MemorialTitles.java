@@ -3,33 +3,26 @@ package cn.pixelmc.memorialtitles;
 import cn.pixelmc.memorialtitles.forge.*;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
-import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
-import net.minecraftforge.registries.*;
 
-@Mod(MemorialTitles.ID)
-public final class MemorialTitles {
+public final class MemorialTitles implements net.fabricmc.api.ModInitializer {
   public static final String ID = "memorialtitles";
-  private static final DeferredRegister<Item> ITEMS =
-      DeferredRegister.create(ForgeRegistries.ITEMS, ID);
-  public static final RegistryObject<Item> TOKEN =
-      ITEMS.register("title_token", () -> new Item(new Item.Properties().stacksTo(1)));
-  public static final RegistryObject<Item> MENU_ARROW = menu("menu_arrow");
-  public static final RegistryObject<Item> MENU_COLLECTION = menu("menu_collection");
-  public static final RegistryObject<Item> MENU_CATALOGUE = menu("menu_catalogue");
-  public static final RegistryObject<Item> MENU_PEOPLE = menu("menu_people");
-  public static final RegistryObject<Item> MENU_SEARCH = menu("menu_search");
-  public static final RegistryObject<Item> MENU_SORT = menu("menu_sort");
-  public static final RegistryObject<Item> MENU_FILTER = menu("menu_filter");
-  public static final RegistryObject<Item> MENU_UNEQUIP = menu("menu_unequip");
-  public static final RegistryObject<Item> MENU_DISPLAY = menu("menu_display");
-  public static final RegistryObject<Item> MENU_HEAD_DISPLAY = menu("menu_head_display");
-  public static final RegistryObject<Item> MENU_CHAT_DISPLAY = menu("menu_chat_display");
-  public static final RegistryObject<Item> MENU_TAB_DISPLAY = menu("menu_tab_display");
+  public static final java.util.function.Supplier<Item> TOKEN = menu("title_token");
+  public static final java.util.function.Supplier<Item> MENU_ARROW = menu("menu_arrow");
+  public static final java.util.function.Supplier<Item> MENU_COLLECTION = menu("menu_collection");
+  public static final java.util.function.Supplier<Item> MENU_CATALOGUE = menu("menu_catalogue");
+  public static final java.util.function.Supplier<Item> MENU_PEOPLE = menu("menu_people");
+  public static final java.util.function.Supplier<Item> MENU_SEARCH = menu("menu_search");
+  public static final java.util.function.Supplier<Item> MENU_SORT = menu("menu_sort");
+  public static final java.util.function.Supplier<Item> MENU_FILTER = menu("menu_filter");
+  public static final java.util.function.Supplier<Item> MENU_UNEQUIP = menu("menu_unequip");
+  public static final java.util.function.Supplier<Item> MENU_DISPLAY = menu("menu_display");
+  public static final java.util.function.Supplier<Item> MENU_HEAD_DISPLAY = menu("menu_head_display");
+  public static final java.util.function.Supplier<Item> MENU_CHAT_DISPLAY = menu("menu_chat_display");
+  public static final java.util.function.Supplier<Item> MENU_TAB_DISPLAY = menu("menu_tab_display");
 
-  private static RegistryObject<Item> menu(String name) {
-    return ITEMS.register(name, () -> new Item(new Item.Properties().stacksTo(1)));
+  private static java.util.function.Supplier<Item> menu(String name) {
+    Item item = net.minecraft.core.Registry.register(net.minecraft.core.registries.BuiltInRegistries.ITEM, new net.minecraft.resources.ResourceLocation(ID, name), new Item(new Item.Properties().stacksTo(1)));
+    return () -> item;
   }
 
   public static Item menuIcon(Item visual) {
@@ -48,10 +41,15 @@ public final class MemorialTitles {
     return visual;
   }
 
-  public MemorialTitles() {
+  @Override public void onInitialize() {
     cn.pixelmc.memorialtitles.service.RemoteGateway.register();
-    ITEMS.register(FMLJavaModLoadingContext.get().getModEventBus());
     Network.register();
-    MinecraftForge.EVENT_BUS.register(new ServerRuntime());
+    ServerRuntime runtime = new ServerRuntime();
+    net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STARTED.register(runtime::starting);
+    net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPING.register(server -> runtime.stopping());
+    net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(server -> runtime.tick());
+    net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback.EVENT.register((dispatcher, registry, environment) -> cn.pixelmc.memorialtitles.forge.Commands.register(dispatcher));
+    net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> runtime.login(handler.player));
+    net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> runtime.logout(handler.player));
   }
 }

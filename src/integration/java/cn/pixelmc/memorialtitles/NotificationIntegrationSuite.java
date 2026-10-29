@@ -27,7 +27,7 @@ public final class NotificationIntegrationSuite {
 
   public static void main(String[] args) throws Exception {
     String password = Objects.requireNonNull(System.getenv("MT_TEST_PASSWORD"));
-    String base = "jdbc:mariadb://127.0.0.1:43307/";
+    String base = "jdbc:mariadb://127.0.0.1:43321/";
     String name = "mt_notice_" + UUID.randomUUID().toString().replace("-", "");
     Database root = new Database(new Database.Config(base, "root", password));
     try (Connection c = root.open()) {

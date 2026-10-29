@@ -24,7 +24,7 @@ public final class TitleHoldersIntegrationSuite {
   private static JsonObject json(HttpResponse<String> r) { return JsonParser.parseString(r.body()).getAsJsonObject(); }
   private static Title title(String id) { return new Title(id, RichText.plain(id), "", "", "", "", 0, 0, false, true, 0); }
   private static final class Browser {
-    final String base = "http://127.0.0.1:18768";
+    final String base = "http://127.0.0.1:18783";
     final HttpClient http = HttpClient.newBuilder().cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL)).build();
     HttpResponse<String> get(String path) throws Exception {
       return http.send(HttpRequest.newBuilder(URI.create(base + "/api" + path)).GET().build(), HttpResponse.BodyHandlers.ofString());
@@ -39,7 +39,7 @@ public final class TitleHoldersIntegrationSuite {
 
   public static void main(String[] args) throws Exception {
     String password = Objects.requireNonNull(System.getenv("MT_TEST_PASSWORD"));
-    String base = "jdbc:mariadb://127.0.0.1:43307/";
+    String base = "jdbc:mariadb://127.0.0.1:43321/";
     String name = "mt_holders_" + UUID.randomUUID().toString().replace("-", "").substring(0,12);
     Database root = new Database(new Database.Config(base, "root", password));
     try (var c = root.open()) { Database.execute(c, "CREATE DATABASE " + name + " CHARACTER SET utf8mb4"); }
@@ -66,7 +66,7 @@ public final class TitleHoldersIntegrationSuite {
         public CompletableFuture<Void> reload(TitleService.Actor actor) { return CompletableFuture.failedFuture(new UnsupportedOperationException()); }
       };
       try (AdminWebServer web = new AdminWebServer(service, host,
-          new WebConfig(true,"127.0.0.1",18768,"http://127.0.0.1:18768",60,List.of()),folder,folder.resolve("backups"))) {
+          new WebConfig(true,"127.0.0.1",18783,"http://127.0.0.1:18783",60,List.of()),folder,folder.resolve("backups"))) {
         String login = AccountStore.randomPassword(); web.accounts.create("owner",admin,login);
         Browser browser = new Browser();
         check(browser.get("/title-holders?title=selected").statusCode()==401, "holder list requires authenticated administrator session");

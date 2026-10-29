@@ -13,10 +13,10 @@ import java.util.concurrent.*;
 public final class WebAcceptanceHarness {
   public static void main(String[] args)throws Exception{
     String password=System.getenv("MT_TEST_PASSWORD");if(password==null)throw new IllegalStateException("Set MT_TEST_PASSWORD");
-    var root=new Database(new Database.Config("jdbc:mariadb://127.0.0.1:43307/","root",password));
+    var root=new Database(new Database.Config("jdbc:mariadb://127.0.0.1:43321/","root",password));
     try(Connection c=root.open()){Database.execute(c,"CREATE DATABASE IF NOT EXISTS mt_web_acceptance CHARACTER SET utf8mb4");}
     Path folder=Path.of("run-web-acceptance").toAbsolutePath(), backups=folder.resolve("backups");Files.createDirectories(folder);
-    var s=new TitleService(new Database(new Database.Config("jdbc:mariadb://127.0.0.1:43307/mt_web_acceptance","root",password)));
+    var s=new TitleService(new Database(new Database.Config("jdbc:mariadb://127.0.0.1:43321/mt_web_acceptance","root",password)));
     s.reconnect().get(20,TimeUnit.SECONDS);UUID admin=UUID.fromString("7520aa16-9d82-324e-acf4-7ecbf7aa436d"), alex=UUID.fromString("f0063548-23c3-41f9-8e39-42801f495193");var console=TitleService.Actor.consoleActor();
     if(s.snapshot().players().isEmpty()){
       s.login(admin,"MTTester").get();s.login(alex,"Alex").get();s.authorize(console,admin,true).get();
@@ -30,11 +30,11 @@ public final class WebAcceptanceHarness {
       public CompletableFuture<Path> backup(TitleService.Actor actor){return s.export(actor).thenCompose(a->s.background(()->{Path p=Backup.write(backups,a);Backup.retain(backups,a.settings().retentionDays());return p;}));}
       public CompletableFuture<Void> reload(TitleService.Actor actor){return s.background(()->JSON.fromJson(Files.readString(folder.resolve("definitions.json")),AdminWebServer.Definitions.class)).thenCompose(d->s.reload(actor,d.titles(),d.settings()));}
     };
-    int port=Integer.parseInt(System.getenv().getOrDefault("MT_WEB_PREVIEW_PORT","18765"));
+    int port=Integer.parseInt(System.getenv().getOrDefault("MT_WEB_PREVIEW_PORT","18780"));
     String previewUrl="http://127.0.0.1:"+port;
     var web=new AdminWebServer(s,host,new WebConfig(true,"127.0.0.1",port,previewUrl,480,List.of("http://127.0.0.1:4173")),folder,backups);host.mirror();
     Path credentials=Path.of("tools/web-acceptance.local.json");
-    if(web.accounts.get("admin")==null){String initial=AccountStore.randomPassword();web.accounts.create("admin",admin,initial);Files.writeString(credentials,JSON.toJson(Map.of("username","admin","password",initial,"url","http://127.0.0.1:18765","environment","local acceptance only")));}
+    if(web.accounts.get("admin")==null){String initial=AccountStore.randomPassword();web.accounts.create("admin",admin,initial);Files.writeString(credentials,JSON.toJson(Map.of("username","admin","password",initial,"url","http://127.0.0.1:18780","environment","local acceptance only")));}
     Runtime.getRuntime().addShutdownHook(new Thread(()->{web.close();s.close();}));
     System.out.println("MEMORIALTITLES_WEB_ACCEPTANCE_READY "+previewUrl+" (local test accounts only)");
     new CountDownLatch(1).await();
