@@ -2,6 +2,19 @@
 
 [中文](#中文) · [English](#english)
 
+支持版本 / Supported targets
+
+| Minecraft | Loader / Java | Branch |
+| --- | --- | --- |
+| 1.20.1 | Forge 47.3.33+ / 17 | [forge/1.20.1](https://github.com/PixelMC-Projects/MemorialTitles/tree/forge/1.20.1) |
+| 1.20.1 | Fabric / 17 | [fabric/1.20.1](https://github.com/PixelMC-Projects/MemorialTitles/tree/fabric/1.20.1) |
+| 1.21.1 | Fabric / 21 | [fabric/1.21.1](https://github.com/PixelMC-Projects/MemorialTitles/tree/fabric/1.21.1) |
+| 1.21.1 | NeoForge / 21 | [neoforge/1.21.1](https://github.com/PixelMC-Projects/MemorialTitles/tree/neoforge/1.21.1) |
+
+客户端与服务端使用同一目标版本；Fabric 需要 Fabric API。各版本 JAR 与配套 Manager 服务见 [Releases](https://github.com/PixelMC-Projects/MemorialTitles/releases)。
+Use the same target on server and clients; Fabric also requires Fabric API. Matching mod and Manager service assets are available in [Releases](https://github.com/PixelMC-Projects/MemorialTitles/releases).
+
+
 ## 中文
 
 为玩家收藏值得纪念的称号，并在头顶、聊天和 TAB 中展示。
