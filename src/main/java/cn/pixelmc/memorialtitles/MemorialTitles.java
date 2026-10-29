@@ -3,32 +3,32 @@ package cn.pixelmc.memorialtitles;
 import cn.pixelmc.memorialtitles.forge.*;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
-import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
-import net.minecraftforge.registries.*;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.neoforge.registries.*;
 
 @Mod(MemorialTitles.ID)
 public final class MemorialTitles {
   public static final String ID = "memorialtitles";
   private static final DeferredRegister<Item> ITEMS =
-      DeferredRegister.create(ForgeRegistries.ITEMS, ID);
-  public static final RegistryObject<Item> TOKEN =
+      DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.ITEM, ID);
+  public static final DeferredHolder<Item, Item> TOKEN =
       ITEMS.register("title_token", () -> new Item(new Item.Properties().stacksTo(1)));
-  public static final RegistryObject<Item> MENU_ARROW = menu("menu_arrow");
-  public static final RegistryObject<Item> MENU_COLLECTION = menu("menu_collection");
-  public static final RegistryObject<Item> MENU_CATALOGUE = menu("menu_catalogue");
-  public static final RegistryObject<Item> MENU_PEOPLE = menu("menu_people");
-  public static final RegistryObject<Item> MENU_SEARCH = menu("menu_search");
-  public static final RegistryObject<Item> MENU_SORT = menu("menu_sort");
-  public static final RegistryObject<Item> MENU_FILTER = menu("menu_filter");
-  public static final RegistryObject<Item> MENU_UNEQUIP = menu("menu_unequip");
-  public static final RegistryObject<Item> MENU_DISPLAY = menu("menu_display");
-  public static final RegistryObject<Item> MENU_HEAD_DISPLAY = menu("menu_head_display");
-  public static final RegistryObject<Item> MENU_CHAT_DISPLAY = menu("menu_chat_display");
-  public static final RegistryObject<Item> MENU_TAB_DISPLAY = menu("menu_tab_display");
+  public static final DeferredHolder<Item, Item> MENU_ARROW = menu("menu_arrow");
+  public static final DeferredHolder<Item, Item> MENU_COLLECTION = menu("menu_collection");
+  public static final DeferredHolder<Item, Item> MENU_CATALOGUE = menu("menu_catalogue");
+  public static final DeferredHolder<Item, Item> MENU_PEOPLE = menu("menu_people");
+  public static final DeferredHolder<Item, Item> MENU_SEARCH = menu("menu_search");
+  public static final DeferredHolder<Item, Item> MENU_SORT = menu("menu_sort");
+  public static final DeferredHolder<Item, Item> MENU_FILTER = menu("menu_filter");
+  public static final DeferredHolder<Item, Item> MENU_UNEQUIP = menu("menu_unequip");
+  public static final DeferredHolder<Item, Item> MENU_DISPLAY = menu("menu_display");
+  public static final DeferredHolder<Item, Item> MENU_HEAD_DISPLAY = menu("menu_head_display");
+  public static final DeferredHolder<Item, Item> MENU_CHAT_DISPLAY = menu("menu_chat_display");
+  public static final DeferredHolder<Item, Item> MENU_TAB_DISPLAY = menu("menu_tab_display");
 
-  private static RegistryObject<Item> menu(String name) {
+  private static DeferredHolder<Item, Item> menu(String name) {
     return ITEMS.register(name, () -> new Item(new Item.Properties().stacksTo(1)));
   }
 
@@ -48,10 +48,10 @@ public final class MemorialTitles {
     return visual;
   }
 
-  public MemorialTitles() {
+  public MemorialTitles(IEventBus modBus) {
     cn.pixelmc.memorialtitles.service.RemoteGateway.register();
-    ITEMS.register(FMLJavaModLoadingContext.get().getModEventBus());
-    Network.register();
-    MinecraftForge.EVENT_BUS.register(new ServerRuntime());
+    ITEMS.register(modBus);
+    modBus.addListener(Network::register);
+    NeoForge.EVENT_BUS.register(new ServerRuntime());
   }
 }

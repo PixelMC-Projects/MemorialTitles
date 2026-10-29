@@ -1167,7 +1167,7 @@ public final class AdminScreen extends Screen {
   }
 
   @Override
-  public boolean mouseScrolled(double bx, double by, double amount) {
+  public boolean mouseScrolled(double bx, double by, double horizontal, double amount) {
     if (view.equals("titles") || view.equals("players")) {
       int count = view.equals("titles") ? titles.size() : players.size();
       listOffset =
@@ -1180,8 +1180,13 @@ public final class AdminScreen extends Screen {
       outputOffset = Math.max(0, outputOffset + (amount < 0 ? 3 : -3));
       return true;
     }
-    return super.mouseScrolled(bx / uiScale, by / uiScale, amount);
+    return super.mouseScrolled(bx / uiScale, by / uiScale, horizontal, amount);
   }
+
+  // 1.21 Screen.render invokes renderBackground before its widgets. The custom
+  // screen already paints its background, so keep the final widget pass transparent.
+  @Override
+  public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {}
 
   @Override
   public boolean isPauseScreen() {

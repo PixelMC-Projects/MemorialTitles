@@ -12,55 +12,41 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.*;
-import net.minecraftforge.network.simple.SimpleChannel;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.neoforge.network.*;
 
 public final class Network {
-  private static final SimpleChannel CHANNEL =
-      NetworkRegistry.newSimpleChannel(
-          new ResourceLocation(MemorialTitles.ID, "titles"), () -> "3", "3"::equals, "3"::equals);
   private static final Map<UUID, long[]> RATE = new HashMap<>();
-
-  public static void register() {
-    CHANNEL
-        .messageBuilder(Request.class, 0, NetworkDirection.PLAY_TO_SERVER)
-        .encoder((p, b) -> b.writeUtf(p.json, 32767))
-        .decoder(b -> new Request(b.readUtf(32767)))
-        .consumerMainThread(Network::handle)
-        .add();
-    CHANNEL
-        .messageBuilder(Response.class, 1, NetworkDirection.PLAY_TO_CLIENT)
-        .encoder((p, b) -> b.writeUtf(p.json, 262144))
-        .decoder(b -> new Response(b.readUtf(262144)))
-        .consumerMainThread(
-            (p, c) -> {
-              DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> ClientRuntime.receive(p.json));
-              c.get().setPacketHandled(true);
-            })
-        .add();
+  public record Request(String json) implements net.minecraft.network.protocol.common.custom.CustomPacketPayload {
+    public static final Type<Request> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MemorialTitles.ID, "request"));
+    public static final net.minecraft.network.codec.StreamCodec<net.minecraft.network.RegistryFriendlyByteBuf, Request> CODEC =
+        net.minecraft.network.codec.StreamCodec.of((buffer, value) -> buffer.writeUtf(value.json, 32767), buffer -> new Request(buffer.readUtf(32767)));
+    @Override public Type<? extends net.minecraft.network.protocol.common.custom.CustomPacketPayload> type() { return TYPE; }
   }
-
-  public record Request(String json) {}
-
-  public record Response(String json) {}
-
+  public record Response(String json) implements net.minecraft.network.protocol.common.custom.CustomPacketPayload {
+    public static final Type<Response> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(MemorialTitles.ID, "response"));
+    public static final net.minecraft.network.codec.StreamCodec<net.minecraft.network.RegistryFriendlyByteBuf, Response> CODEC =
+        net.minecraft.network.codec.StreamCodec.of((buffer, value) -> buffer.writeUtf(value.json, 262144), buffer -> new Response(buffer.readUtf(262144)));
+    @Override public Type<? extends net.minecraft.network.protocol.common.custom.CustomPacketPayload> type() { return TYPE; }
+  }
+  public static void register(net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent event) {
+    var registrar = event.registrar("3");
+    registrar.playToServer(Request.TYPE, Request.CODEC,
+        (payload, context) -> context.enqueueWork(() -> handle(payload, (ServerPlayer)context.player())));
+    registrar.playToClient(Response.TYPE, Response.CODEC,
+        (payload, context) -> context.enqueueWork(() -> ClientRuntime.receive(payload.json())));
+  }
   public static void request(String operation, JsonObject data) {
     data.addProperty("op", operation);
-    CHANNEL.sendToServer(new Request(JSON.toJson(data)));
+    net.neoforged.neoforge.network.PacketDistributor.sendToServer(new Request(JSON.toJson(data)));
   }
-
   public static void reply(ServerPlayer p, String kind, Object value) {
     if (p.connection == null) return;
-    JsonObject out = new JsonObject();
-    out.addProperty("kind", kind);
-    out.add("data", JSON.toJsonTree(value));
+    JsonObject out = new JsonObject(); out.addProperty("kind", kind); out.add("data", JSON.toJsonTree(value));
     String json = JSON.toJson(out);
     if (json.length() > 262144) throw new IllegalArgumentException("响应太大，请缩小筛选范围");
-    CHANNEL.send(PacketDistributor.PLAYER.with(() -> p), new Response(json));
+    net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(p, new Response(json));
   }
-
   public static void admin(ServerPlayer p) {
     TitleService.requireAdmin(
         ServerRuntime.current.service.snapshot(), TitleService.Actor.player(p.getUUID()));
@@ -105,9 +91,7 @@ public final class Network {
     return ++state[1] <= 12;
   }
 
-  private static void handle(Request req, Supplier<NetworkEvent.Context> ctx) {
-    ctx.get().setPacketHandled(true);
-    ServerPlayer p = ctx.get().getSender();
+  private static void handle(Request req, ServerPlayer p) {
     if (p == null || !rate(p.getUUID())) return;
     ServerRuntime r = ServerRuntime.current;
     if (r == null || r.service == null) return;

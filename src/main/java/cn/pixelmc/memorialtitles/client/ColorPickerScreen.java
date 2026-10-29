@@ -143,6 +143,11 @@ public final class ColorPickerScreen extends Screen {
     minecraft.setScreen(parent);
   }
 
+  // 1.21 Screen.render invokes renderBackground before its widgets. The custom
+  // screen already paints its background, so keep the final widget pass transparent.
+  @Override
+  public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {}
+
   @Override
   public boolean isPauseScreen() {
     return false;

@@ -12,11 +12,12 @@ import java.util.concurrent.*;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.common.util.FakePlayer;
-import net.minecraftforge.event.*;
-import net.minecraftforge.event.entity.player.PlayerEvent;
-import net.minecraftforge.event.server.*;
-import net.minecraftforge.eventbus.api.*;
+import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.event.*;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.server.*;
+import net.neoforged.bus.api.*;
 
 public final class ServerRuntime {
   public static volatile ServerRuntime current;
@@ -31,6 +32,9 @@ public final class ServerRuntime {
   private long nextTab;
   private long nextReminderCheck = System.nanoTime();
   private final Map<UUID, String> pendingLogins = new HashMap<>();
+  // Manager admission completes asynchronously after the loader JOIN event. Retain only
+  // the exact live player object; no profile, reward or notification exists before admission.
+  private final PendingAdmissions<ServerPlayer> awaitingAdmission = new PendingAdmissions<>();
   private static final long JOIN_NOTIFICATION_DELAY = TimeUnit.SECONDS.toNanos(10);
   private final Map<UUID, NotificationSession> notificationSessions = new HashMap<>();
 
@@ -53,9 +57,9 @@ public final class ServerRuntime {
   public void starting(ServerStartedEvent e) {
     current = this;
     server = e.getServer();
-    try{Class.forName("com.pixelmc.pixelmcmanager.api.ManagerBridgeApi").getMethod("onCallback",String.class,java.util.function.BiConsumer.class).invoke(null,"memorialtitles",(java.util.function.BiConsumer<String,String>)(op,json)->{var runtime=cn.pixelmc.memorialtitles.forge.ServerRuntime.current;if(runtime!=null&&op.equals("avatarRequest")){var data=com.google.gson.JsonParser.parseString(json).getAsJsonObject();var player=runtime.server.getPlayerList().getPlayer(java.util.UUID.fromString(data.get("player").getAsString()));if(player!=null)cn.pixelmc.memorialtitles.forge.Network.reply(player,"avatarRequest",data.get("nonce").getAsString());}});}catch(ReflectiveOperationException ignored){}
+    try{Class.forName("com.pixelmc.pixelmcmanager.api.ManagerBridgeApi").getMethod("onCallback",String.class,java.util.function.BiConsumer.class).invoke(null,"memorialtitles",(java.util.function.BiConsumer<String,String>)(op,json)->{var runtime=cn.pixelmc.memorialtitles.forge.ServerRuntime.current;if(runtime!=null&&op.equals("avatarRequest")){var data=com.google.gson.JsonParser.parseString(json).getAsJsonObject();runtime.server.execute(()->{var player=runtime.server.getPlayerList().getPlayer(java.util.UUID.fromString(data.get("player").getAsString()));if(player!=null&&!isFake(player))cn.pixelmc.memorialtitles.forge.Network.reply(player,"avatarRequest",data.get("nonce").getAsString());});}});}catch(ReflectiveOperationException ignored){}
     try {
-      files = new ServerFiles(server.getServerDirectory().toPath().toAbsolutePath());
+      files = new ServerFiles(server.getServerDirectory().toAbsolutePath());
       service = files.config.remote() ? TitleService.remoteService() : new TitleService(new Database(files.config.database()));
       MemorialTitlesApi.attach(service);
       service.listen(
@@ -125,6 +129,7 @@ public final class ServerRuntime {
   @SubscribeEvent
   public void stopping(ServerStoppingEvent e) {
     notificationSessions.clear();
+    awaitingAdmission.clear();
     if (web != null) web.close();
     if (service != null) service.close();
     MemorialTitlesApi.attach(null);
@@ -139,11 +144,17 @@ public final class ServerRuntime {
   @SubscribeEvent(priority = EventPriority.LOWEST)
   public void login(PlayerEvent.PlayerLoggedInEvent e) {
     if (!(e.getEntity() instanceof ServerPlayer p) || isFake(p)) return;
-    if(files!=null && files.config.remote() && !RemoteGateway.admitted(p.getUUID())) return;
+    if (files != null && files.config.remote() && !RemoteGateway.admitted(p.getUUID())) {
+      awaitingAdmission.await(p.getUUID(), p);
+      return;
+    }
     acceptedLogin(p);
   }
 
   private void acceptedLogin(ServerPlayer p) {
+    NotificationSession previous = notificationSessions.get(p.getUUID());
+    if (previous != null && previous.player == p) return;
+    awaitingAdmission.forget(p.getUUID(), p);
     var joined = new HashSet<>(online);
     joined.add(p.getUUID());
     online = Set.copyOf(joined);
@@ -155,6 +166,9 @@ public final class ServerRuntime {
 
   @SubscribeEvent
   public void logout(PlayerEvent.PlayerLoggedOutEvent e) {
+    if (e.getEntity() instanceof ServerPlayer player) awaitingAdmission.forget(player.getUUID(), player);
+    NotificationSession previous = notificationSessions.get(e.getEntity().getUUID());
+    if (previous != null && previous.player != e.getEntity()) return;
     notificationSessions.remove(e.getEntity().getUUID());
     pendingLogins.remove(e.getEntity().getUUID());
     if (web != null) web.avatars.logout(e.getEntity().getUUID());
@@ -226,8 +240,10 @@ public final class ServerRuntime {
   }
 
   @SubscribeEvent
-  public void tick(TickEvent.ServerTickEvent e) {
-    if (e.phase != TickEvent.Phase.END || server == null || service == null) return;
+  public void tick(ServerTickEvent.Post e) {
+    if (server == null || service == null) return;
+    awaitingAdmission.drain((id, candidate) -> server.getPlayerList().getPlayer(id) == candidate
+        && !isFake(candidate), RemoteGateway::admitted, this::acceptedLogin);
     long now = System.currentTimeMillis();
     long monotonicNow = System.nanoTime();
     pollNotifications(monotonicNow);

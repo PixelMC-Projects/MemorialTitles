@@ -13,18 +13,18 @@ import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.ForgeHooksClient;
-import net.minecraftforge.client.event.*;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.eventbus.api.*;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.util.ObfuscationReflectionHelper;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.neoforge.client.ClientHooks;
+import net.neoforged.neoforge.client.event.*;
+
+import net.neoforged.bus.api.*;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.common.EventBusSubscriber;
 import com.mojang.datafixers.util.Either;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.world.inventory.ChestMenu;
 
-@Mod.EventBusSubscriber(modid = MemorialTitles.ID, value = Dist.CLIENT)
+@EventBusSubscriber(modid = MemorialTitles.ID, value = Dist.CLIENT)
 public final class ClientRuntime {
   public static final KeyMapping OPEN =
       new KeyMapping(
@@ -75,9 +75,8 @@ public final class ClientRuntime {
   }
 
   @SubscribeEvent
-  public static void tick(TickEvent.ClientTickEvent e) {
+  public static void tick(ClientTickEvent.Post e) {
     Minecraft mc = Minecraft.getInstance();
-    if (e.phase != TickEvent.Phase.END) return;
     AvatarCapture.tick(mc);
     if (mc.getConnection() == null) {
       WORN.clear();
@@ -96,34 +95,36 @@ public final class ClientRuntime {
 
   @SubscribeEvent(priority = EventPriority.LOWEST)
   public static void name(RenderNameTagEvent e) {
-    if (!head || e.getResult() == Event.Result.DENY || !(e.getEntity() instanceof Player p)) return;
+    if (!head || e.canRender() == net.neoforged.neoforge.common.util.TriState.FALSE || !(e.getEntity() instanceof Player p)) return;
     if (HIDDEN_HEAD.contains(p.getUUID())) return;
     RichText rich = WORN.get(p.getUUID());
     if (rich == null) return;
     Minecraft mc = Minecraft.getInstance();
     try {
-      if (visible == null)
-        visible =
-            ObfuscationReflectionHelper.findMethod(EntityRenderer.class, "m_6512_", Entity.class);
-      if (!(boolean) visible.invoke(e.getEntityRenderer(), p)) return;
+      if (visible == null) {
+        visible = EntityRenderer.class.getDeclaredMethod("shouldShowName", Entity.class);
+        visible.setAccessible(true);
+      }
+      if (e.canRender() != net.neoforged.neoforge.common.util.TriState.TRUE
+          && !(boolean) visible.invoke(e.getEntityRenderer(), p)) return;
     } catch (ReflectiveOperationException error) {
       head = false;
-      com.mojang.logging.LogUtils.getLogger().error("MemorialTitles 头顶可见性适配失败，已停用该出口", error);
+      com.mojang.logging.LogUtils.getLogger().error("MemorialTitles name visibility adapter failed", error);
       return;
     }
-    if (!ForgeHooksClient.isNameplateInRenderDistance(
+    if (!ClientHooks.isNameplateInRenderDistance(
         p, mc.getEntityRenderDispatcher().distanceToSqr(p))) return;
     var pose = e.getPoseStack();
     var text = Text.render(rich);
     Font font = mc.font;
     boolean seeThrough = !p.isDiscrete();
     float scoreboardOffset =
-        p.getScoreboard().getDisplayObjective(2) != null
+        p.getScoreboard().getDisplayObjective(net.minecraft.world.scores.DisplaySlot.BELOW_NAME) != null
                 && mc.getEntityRenderDispatcher().distanceToSqr(p) < 100
             ? .25f
             : 0;
     pose.pushPose();
-    pose.translate(0, p.getNameTagOffsetY() + offset + scoreboardOffset, 0);
+    pose.translate(0, (p.getBbHeight() + .5f) + offset + scoreboardOffset, 0);
     pose.mulPose(mc.getEntityRenderDispatcher().cameraOrientation());
     pose.scale(-.025f * scale, -.025f * scale, .025f * scale);
     float x = -font.width(text) / 2f;
@@ -178,10 +179,10 @@ public final class ClientRuntime {
     });
   }
 
-  @Mod.EventBusSubscriber(
+  @EventBusSubscriber(
       modid = MemorialTitles.ID,
       value = Dist.CLIENT,
-      bus = Mod.EventBusSubscriber.Bus.MOD)
+      bus = EventBusSubscriber.Bus.MOD)
   public static final class Keys {
     @SubscribeEvent
     public static void register(RegisterKeyMappingsEvent e) {

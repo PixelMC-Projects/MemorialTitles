@@ -1,0 +1,7 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="AGPL-3.0-only"
+[[mods]]
+modId="memorialtitles_smoke"
+version="1"
+displayName="Local smoke fixture"

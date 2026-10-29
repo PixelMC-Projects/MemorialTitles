@@ -168,7 +168,7 @@ public final class WebIntegrationSuite {
     if (password == null) throw new IllegalStateException("Set MT_TEST_PASSWORD");
     String dbName = "mt_web_it_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
     Database root =
-        new Database(new Database.Config("jdbc:mariadb://127.0.0.1:43307/", "root", password));
+        new Database(new Database.Config("jdbc:mariadb://127.0.0.1:43321/", "root", password));
     try (Connection c = root.open()) {
       Database.execute(c, "CREATE DATABASE " + dbName + " CHARACTER SET utf8mb4");
     }
@@ -180,7 +180,7 @@ public final class WebIntegrationSuite {
         new TitleService(
             new Database(
                 new Database.Config(
-                    "jdbc:mariadb://127.0.0.1:43307/" + dbName, "root", password)))) {
+                    "jdbc:mariadb://127.0.0.1:43321/" + dbName, "root", password)))) {
       waitFor(s.reconnect());
       waitFor(s.login(admin, "网页管理员"));
       waitFor(s.login(bob, "测试玩家"));
@@ -234,7 +234,7 @@ public final class WebIntegrationSuite {
           new AdminWebServer(
               s,
               host,
-              new WebConfig(true, "127.0.0.1", 18766, "http://127.0.0.1:18766", 60, List.of()),
+              new WebConfig(true, "127.0.0.1", 18781, "http://127.0.0.1:18781", 60, List.of()),
               folder,
               folder.resolve("backups"))) {
         web.accounts.create("owner", admin, "Web_Test_Password_123");
@@ -242,7 +242,7 @@ public final class WebIntegrationSuite {
             !Files.readString(folder.resolve("web-accounts.json"))
                 .contains("Web_Test_Password_123"),
             "password file contains salted hashes only");
-        Browser b = new Browser("http://127.0.0.1:18766"), anonymous = new Browser(b.base);
+        Browser b = new Browser("http://127.0.0.1:18781"), anonymous = new Browser(b.base);
         check(b.get("/").statusCode() == 200, "embedded production index is served");
         check(
             anonymous.get("/api/state").statusCode() == 401,

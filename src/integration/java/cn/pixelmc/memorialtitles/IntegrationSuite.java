@@ -40,10 +40,10 @@ public final class IntegrationSuite {
   }
 
   public static void main(String[] args) throws Exception {
-    String base = System.getProperty("mt.testDb", "jdbc:mariadb://127.0.0.1:43307/");
-    if (!base.matches("jdbc:mariadb://127\\.0\\.0\\.1:43307/"))
+    String base = System.getProperty("mt.testDb", "jdbc:mariadb://127.0.0.1:43321/");
+    if (!base.matches("jdbc:mariadb://127\\.0\\.0\\.1:43321/"))
       throw new IllegalArgumentException(
-          "Suite only permits isolated loopback test MariaDB on port 43307");
+          "Suite only permits isolated loopback test MariaDB on port 43321");
     String password = System.getenv("MT_TEST_PASSWORD");
     if (password == null) throw new IllegalStateException("Set MT_TEST_PASSWORD");
     String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 10),

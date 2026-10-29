@@ -58,7 +58,7 @@ public final class ReminderIntegrationSuite {
         && command.getChild("off").getChildren().isEmpty(), "self-only reminder commands have no player or UUID target argument");
 
     String password = Objects.requireNonNull(System.getenv("MT_TEST_PASSWORD"));
-    String base = "jdbc:mariadb://127.0.0.1:43307/", suffix = UUID.randomUUID().toString().replace("-", "");
+    String base = "jdbc:mariadb://127.0.0.1:43321/", suffix = UUID.randomUUID().toString().replace("-", "");
     List<String> names = List.of("mt_reminder_" + suffix, "mt_reminder_restore_" + suffix, "mt_reminder_legacy_" + suffix);
     Database root = new Database(new Database.Config(base, "root", password));
     try (var c = root.open()) { for (String name : names) Database.execute(c, "CREATE DATABASE " + name + " CHARACTER SET utf8mb4"); }

@@ -144,9 +144,9 @@ public final class TitleMenu extends ChestMenu {
       Title title = s.titles().get(id);
       Owned ownership = s.ownership(target, id);
       ItemStack stack = new ItemStack(MemorialTitles.TOKEN.get());
-      stack.setHoverName(Text.render(title.name()));
-      stack.getOrCreateTag().putString("MemorialTitleId", id);
-      stack.getOrCreateTag().putInt("CustomModelData", title.icon());
+      stack.set(net.minecraft.core.component.DataComponents.CUSTOM_NAME, Text.render(title.name()));
+      net.minecraft.world.item.component.CustomData.update(net.minecraft.core.component.DataComponents.CUSTOM_DATA, stack, tag -> tag.putString("MemorialTitleId", id));
+      stack.set(net.minecraft.core.component.DataComponents.CUSTOM_MODEL_DATA, new net.minecraft.world.item.component.CustomModelData(title.icon()));
       List<String> lore = new ArrayList<>();
       Collections.addAll(
           lore, title.description(), "来源：" + title.source(), "分类：" + title.category());
@@ -212,7 +212,7 @@ public final class TitleMenu extends ChestMenu {
       lore.add("还需佩戴称号，并开启该称号的佩戴展示");
     else lore.add("当前正在此位置展示称号");
     ItemStack stack = item(visual, name + "显示：" + onOff(selected), lore);
-    stack.setHoverName(Component.literal(name + "显示：" + onOff(selected))
+    stack.set(net.minecraft.core.component.DataComponents.CUSTOM_NAME, Component.literal(name + "显示：" + onOff(selected))
         .withStyle(selected ? ChatFormatting.GREEN : ChatFormatting.GRAY));
     setLore(stack, lore);
     buttons.setItem(slot, stack);
@@ -226,7 +226,7 @@ public final class TitleMenu extends ChestMenu {
 
   public static ItemStack item(Item item, String name, List<String> lore) {
     ItemStack stack = new ItemStack(MemorialTitles.menuIcon(item));
-    stack.setHoverName(Component.literal(name).withStyle(ChatFormatting.WHITE));
+    stack.set(net.minecraft.core.component.DataComponents.CUSTOM_NAME, Component.literal(name).withStyle(ChatFormatting.WHITE));
     setLore(stack, lore);
     return stack;
   }
@@ -240,8 +240,10 @@ public final class TitleMenu extends ChestMenu {
                 Component.Serializer.toJson(
                     Component.literal(part)
                         .withStyle(
-                            part.equals("已绝版") ? ChatFormatting.GOLD : ChatFormatting.GRAY))));
-    stack.getOrCreateTagElement("display").put("Lore", lore);
+                            part.equals("已绝版") ? ChatFormatting.GOLD : ChatFormatting.GRAY), net.minecraft.core.RegistryAccess.EMPTY)));
+    java.util.List<Component> components = new java.util.ArrayList<>();
+    for (int i = 0; i < lore.size(); i++) components.add(Component.Serializer.fromJson(lore.getString(i), net.minecraft.core.RegistryAccess.EMPTY));
+    stack.set(net.minecraft.core.component.DataComponents.LORE, new net.minecraft.world.item.component.ItemLore(components));
     MenuTooltips.capture(stack, lore);
   }
 

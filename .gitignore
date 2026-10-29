@@ -44,6 +44,7 @@ Thumbs.db
 gradle/local-cache-repository/
 /libs/
 /runtime/
+/runtime-*/
 /data/
 /backups/
 .env
