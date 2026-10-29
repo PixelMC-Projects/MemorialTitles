@@ -26,7 +26,7 @@ public final class UndoIntegrationSuite {
   private static long change(TitleService s,String action)throws Exception{return changes(s,action).get(0).id();}
 
   public static void main(String[] args)throws Exception{
-    String password=Objects.requireNonNull(System.getenv("MT_TEST_PASSWORD"));String base="jdbc:mariadb://127.0.0.1:43307/";
+    String password=Objects.requireNonNull(System.getenv("MT_TEST_PASSWORD"));String base="jdbc:mariadb://127.0.0.1:43321/";
     String name="mt_undo_"+UUID.randomUUID().toString().replace("-","").substring(0,10),restoredName=name+"_restore";
     Database root=new Database(new Database.Config(base,"root",password));
     try(var c=root.open()){Database.execute(c,"CREATE DATABASE "+name+" CHARACTER SET utf8mb4");Database.execute(c,"CREATE DATABASE "+restoredName+" CHARACTER SET utf8mb4");}

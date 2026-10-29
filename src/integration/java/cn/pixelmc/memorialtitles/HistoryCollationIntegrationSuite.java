@@ -26,7 +26,7 @@ public final class HistoryCollationIntegrationSuite {
           + "p.name,t.name,d.definition),?)>0)";
 
   public static void main(String[] args) throws Exception {
-    String base = "jdbc:mariadb://127.0.0.1:43307/";
+    String base = "jdbc:mariadb://127.0.0.1:43321/";
     String password = Objects.requireNonNull(System.getenv("MT_TEST_PASSWORD"));
     String name = "mt_collation_" + UUID.randomUUID().toString().replace("-", "");
     Database root = new Database(new Database.Config(base, "root", password));

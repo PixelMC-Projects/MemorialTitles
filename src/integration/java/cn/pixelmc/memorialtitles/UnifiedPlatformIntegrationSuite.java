@@ -67,7 +67,7 @@ public final class UnifiedPlatformIntegrationSuite {
 
   public static void main(String[] args) throws Exception {
     String password = Objects.requireNonNull(System.getenv("MT_TEST_PASSWORD"));
-    String base = "jdbc:mariadb://127.0.0.1:43307/";
+    String base = "jdbc:mariadb://127.0.0.1:43321/";
     String schema = "mt_unified_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
     Database root = new Database(new Database.Config(base, "root", password));
     try (var c = root.open()) {

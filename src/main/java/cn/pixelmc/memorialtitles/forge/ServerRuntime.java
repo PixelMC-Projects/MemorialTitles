@@ -12,11 +12,6 @@ import java.util.concurrent.*;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.common.util.FakePlayer;
-import net.minecraftforge.event.*;
-import net.minecraftforge.event.entity.player.PlayerEvent;
-import net.minecraftforge.event.server.*;
-import net.minecraftforge.eventbus.api.*;
 
 public final class ServerRuntime {
   public static volatile ServerRuntime current;
@@ -31,6 +26,9 @@ public final class ServerRuntime {
   private long nextTab;
   private long nextReminderCheck = System.nanoTime();
   private final Map<UUID, String> pendingLogins = new HashMap<>();
+  // Manager admission completes asynchronously after the loader JOIN event. Retain only
+  // the exact live player object; no profile, reward or notification exists before admission.
+  private final PendingAdmissions<ServerPlayer> awaitingAdmission = new PendingAdmissions<>();
   private static final long JOIN_NOTIFICATION_DELAY = TimeUnit.SECONDS.toNanos(10);
   private final Map<UUID, NotificationSession> notificationSessions = new HashMap<>();
 
@@ -49,13 +47,12 @@ public final class ServerRuntime {
     }
   }
 
-  @SubscribeEvent
-  public void starting(ServerStartedEvent e) {
+  public void starting(MinecraftServer startedServer) {
     current = this;
-    server = e.getServer();
-    try{Class.forName("com.pixelmc.pixelmcmanager.api.ManagerBridgeApi").getMethod("onCallback",String.class,java.util.function.BiConsumer.class).invoke(null,"memorialtitles",(java.util.function.BiConsumer<String,String>)(op,json)->{var runtime=cn.pixelmc.memorialtitles.forge.ServerRuntime.current;if(runtime!=null&&op.equals("avatarRequest")){var data=com.google.gson.JsonParser.parseString(json).getAsJsonObject();var player=runtime.server.getPlayerList().getPlayer(java.util.UUID.fromString(data.get("player").getAsString()));if(player!=null)cn.pixelmc.memorialtitles.forge.Network.reply(player,"avatarRequest",data.get("nonce").getAsString());}});}catch(ReflectiveOperationException ignored){}
+    server = startedServer;
+    try{Class.forName("com.pixelmc.pixelmcmanager.api.ManagerBridgeApi").getMethod("onCallback",String.class,java.util.function.BiConsumer.class).invoke(null,"memorialtitles",(java.util.function.BiConsumer<String,String>)(op,json)->{var runtime=cn.pixelmc.memorialtitles.forge.ServerRuntime.current;if(runtime!=null&&op.equals("avatarRequest")){var data=com.google.gson.JsonParser.parseString(json).getAsJsonObject();runtime.server.execute(()->{var player=runtime.server.getPlayerList().getPlayer(java.util.UUID.fromString(data.get("player").getAsString()));if(player!=null&&!isFake(player))cn.pixelmc.memorialtitles.forge.Network.reply(player,"avatarRequest",data.get("nonce").getAsString());});}});}catch(ReflectiveOperationException ignored){}
     try {
-      files = new ServerFiles(server.getServerDirectory().toPath().toAbsolutePath());
+      files = new ServerFiles(server.getServerDirectory().toAbsolutePath());
       service = files.config.remote() ? TitleService.remoteService() : new TitleService(new Database(files.config.database()));
       MemorialTitlesApi.attach(service);
       service.listen(
@@ -69,7 +66,7 @@ public final class ServerRuntime {
                     Network.syncDisplays(this);
                     tab.update(this);
                     for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-                      p.refreshTabListName();
+                      refreshTabName(p);
                       if (p.containerMenu instanceof TitleMenu menu) menu.refresh();
                     }
                   }));
@@ -122,28 +119,29 @@ public final class ServerRuntime {
     nextBackup = System.currentTimeMillis() + 60000;
   }
 
-  @SubscribeEvent
-  public void stopping(ServerStoppingEvent e) {
+  public void stopping() {
     notificationSessions.clear();
+    awaitingAdmission.clear();
     if (web != null) web.close();
     if (service != null) service.close();
     MemorialTitlesApi.attach(null);
     current = null;
   }
 
-  @SubscribeEvent
-  public void register(RegisterCommandsEvent e) {
-    Commands.register(e.getDispatcher());
-  }
 
-  @SubscribeEvent(priority = EventPriority.LOWEST)
-  public void login(PlayerEvent.PlayerLoggedInEvent e) {
-    if (!(e.getEntity() instanceof ServerPlayer p) || isFake(p)) return;
-    if(files!=null && files.config.remote() && !RemoteGateway.admitted(p.getUUID())) return;
+  public void login(ServerPlayer p) {
+    if (isFake(p)) return;
+    if (files != null && files.config.remote() && !RemoteGateway.admitted(p.getUUID())) {
+      awaitingAdmission.await(p.getUUID(), p);
+      return;
+    }
     acceptedLogin(p);
   }
 
   private void acceptedLogin(ServerPlayer p) {
+    NotificationSession previous = notificationSessions.get(p.getUUID());
+    if (previous != null && previous.player == p) return;
+    awaitingAdmission.forget(p.getUUID(), p);
     var joined = new HashSet<>(online);
     joined.add(p.getUUID());
     online = Set.copyOf(joined);
@@ -153,23 +151,28 @@ public final class ServerRuntime {
     if (service != null) Network.syncDisplays(this);
   }
 
-  @SubscribeEvent
-  public void logout(PlayerEvent.PlayerLoggedOutEvent e) {
-    notificationSessions.remove(e.getEntity().getUUID());
-    pendingLogins.remove(e.getEntity().getUUID());
-    if (web != null) web.avatars.logout(e.getEntity().getUUID());
+  public void logout(ServerPlayer player) {
+    awaitingAdmission.forget(player.getUUID(), player);
+    NotificationSession previous = notificationSessions.get(player.getUUID());
+    if (previous != null && previous.player != player) return;
+    notificationSessions.remove(player.getUUID());
+    pendingLogins.remove(player.getUUID());
+    if (web != null) web.avatars.logout(player.getUUID());
     var left = new HashSet<>(online);
-    left.remove(e.getEntity().getUUID());
+    left.remove(player.getUUID());
     online = Set.copyOf(left);
-    Network.forget(e.getEntity().getUUID());
+    Network.forget(player.getUUID());
   }
 
   public static boolean isFake(ServerPlayer p) {
-    if (p instanceof FakePlayer) return true;
+
     for (Class<?> type = p.getClass(); type != null; type = type.getSuperclass())
       if (Set.of(
               "dev.dubhe.curtain.features.player.patches.EntityPlayerMPFake",
-              "carpet.patches.EntityPlayerMPFake")
+              "carpet.patches.EntityPlayerMPFake",
+              "net.fabricmc.fabric.api.entity.FakePlayer",
+              "net.minecraftforge.common.util.FakePlayer",
+              "net.neoforged.neoforge.common.util.FakePlayer")
           .contains(type.getName())) return true;
     return false;
   }
@@ -225,9 +228,10 @@ public final class ServerRuntime {
                     }));
   }
 
-  @SubscribeEvent
-  public void tick(TickEvent.ServerTickEvent e) {
-    if (e.phase != TickEvent.Phase.END || server == null || service == null) return;
+  public void tick() {
+    if (server == null || service == null) return;
+    awaitingAdmission.drain((id, candidate) -> server.getPlayerList().getPlayer(id) == candidate
+        && !isFake(candidate), RemoteGateway::admitted, this::acceptedLogin);
     long now = System.currentTimeMillis();
     long monotonicNow = System.nanoTime();
     pollNotifications(monotonicNow);
@@ -357,19 +361,16 @@ public final class ServerRuntime {
             });
   }
 
-  @SubscribeEvent
-  public void tabName(PlayerEvent.TabListNameFormat e) {
-    if (service == null || tab.active() || !service.snapshot().settings().tab()) return;
-    Title t = service.snapshot().displayed(e.getEntity().getUUID(), DisplayPosition.TAB);
-    if (t != null)
-      e.setDisplayName(
-          Component.literal("[")
-              .append(Text.render(t.name()))
-              .append("] ")
-              .append(
-                  e.getDisplayName() == null
-                      ? e.getEntity().getDisplayName()
-                      : e.getDisplayName()));
+  public Component tabName(ServerPlayer player, Component original) {
+    if (service == null || tab.active() || !service.snapshot().settings().tab()) return original;
+    Title t = service.snapshot().displayed(player.getUUID(), DisplayPosition.TAB);
+    return t == null ? original : Component.literal("[").append(Text.render(t.name())).append("] ")
+        .append(original == null ? player.getDisplayName() : original);
+  }
+
+  private void refreshTabName(ServerPlayer player) {
+    server.getPlayerList().broadcastAll(new net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket(
+        net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME, player));
   }
 
   public static String safeError(Throwable error) {

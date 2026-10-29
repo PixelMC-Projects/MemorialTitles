@@ -57,10 +57,15 @@ public final class SearchScreen extends Screen {
 
   @Override
   public void render(GuiGraphics g, int x, int y, float dt) {
-    renderBackground(g);
+    g.fillGradient(0, 0, width, height, 0xc0101010, 0xd0101010);
     g.drawCenteredString(font, title, width / 2, height / 2 - 42, 0xffffff);
     super.render(g, x, y, dt);
   }
+
+  // 1.21 Screen.render invokes renderBackground before its widgets. The custom
+  // screen already paints its background, so keep the final widget pass transparent.
+  @Override
+  public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {}
 
   @Override
   public boolean isPauseScreen() {

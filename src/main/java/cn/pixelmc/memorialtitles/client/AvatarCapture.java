@@ -39,7 +39,7 @@ public final class AvatarCapture {
     next = now + 2000;
     int binding = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
     try {
-      var texture = mc.getTextureManager().getTexture(mc.player.getSkinTextureLocation());
+      var texture = mc.getTextureManager().getTexture(mc.player.getSkin().texture());
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture.getId());
       int w = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
       int h = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);

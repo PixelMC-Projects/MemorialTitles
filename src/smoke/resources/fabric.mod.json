@@ -1,0 +1,1 @@
+{"schemaVersion": 1, "id": "memorialtitles_smoke", "version": "1", "name": "Local smoke fixture", "environment": "*", "entrypoints": {"main": ["cn.pixelmc.memorialtitles.SmokeEntrypoint"], "client": ["cn.pixelmc.memorialtitles.ClientSmokeEntrypoint"]}}

@@ -30,7 +30,7 @@ public final class TitleDeletionIntegrationSuite {
   }
   private static final class Browser {
     final HttpClient client = HttpClient.newBuilder().cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL)).build();
-    final String base = "http://127.0.0.1:18767";
+    final String base = "http://127.0.0.1:18782";
     String csrf = "";
     HttpResponse<String> post(String path, Object body) throws Exception {
       return client.send(HttpRequest.newBuilder(URI.create(base + "/api" + path))
@@ -42,8 +42,10 @@ public final class TitleDeletionIntegrationSuite {
   }
 
   public static void main(String[] args) throws Exception {
+    net.minecraft.SharedConstants.tryDetectVersion();
+    net.minecraft.server.Bootstrap.bootStrap();
     String secret = Objects.requireNonNull(System.getenv("MT_TEST_PASSWORD"));
-    String base = "jdbc:mariadb://127.0.0.1:43307/";
+    String base = "jdbc:mariadb://127.0.0.1:43321/";
     String name = "mt_delete_" + UUID.randomUUID().toString().replace("-", "");
     Database root = new Database(new Database.Config(base, "root", secret));
     try (Connection c = root.open()) {
@@ -77,7 +79,7 @@ public final class TitleDeletionIntegrationSuite {
         public CompletableFuture<Void> reload(TitleService.Actor actor) { return CompletableFuture.failedFuture(new UnsupportedOperationException()); }
       };
       try (AdminWebServer web = new AdminWebServer(service, host,
-          new WebConfig(true,"127.0.0.1",18767,"http://127.0.0.1:18767",60,List.of()),folder,folder.resolve("backups"))) {
+          new WebConfig(true,"127.0.0.1",18782,"http://127.0.0.1:18782",60,List.of()),folder,folder.resolve("backups"))) {
         web.accounts.create("delete_admin", admin, "Local_Delete_Test_Password_123");
         Browser browser = new Browser();
         check(browser.post("/title-delete/preview", Map.of("title","target")).statusCode()==401, "anonymous deletion preview is rejected");
@@ -141,9 +143,9 @@ public final class TitleDeletionIntegrationSuite {
             "conflicting undo is atomic and does not overwrite later equipment");
       }
       ListTag lore=new ListTag();
-      lore.add(StringTag.valueOf(Component.Serializer.toJson(Component.literal("本次获得：2026-10-23"))));
+      lore.add(StringTag.valueOf(Component.Serializer.toJson(Component.literal("本次获得：2026-10-23"), net.minecraft.core.RegistryAccess.EMPTY)));
       var data=MenuTooltips.encode(Text.render(rich),lore);
-      lore.add(StringTag.valueOf(Component.Serializer.toJson(Component.literal("整合包无关说明"))));
+      lore.add(StringTag.valueOf(Component.Serializer.toJson(Component.literal("整合包无关说明"), net.minecraft.core.RegistryAccess.EMPTY)));
       var own=MenuTooltips.decode(data).orElseThrow();
       check(own.size()==2 && own.get(0).getString().equals(rich.plain()) && own.get(1).getString().startsWith("本次获得"),
           "menu tooltip snapshot retains title details and excludes later injected lore");

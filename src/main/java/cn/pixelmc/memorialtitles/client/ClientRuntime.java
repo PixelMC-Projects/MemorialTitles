@@ -13,19 +13,11 @@ import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.ForgeHooksClient;
-import net.minecraftforge.client.event.*;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.eventbus.api.*;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.util.ObfuscationReflectionHelper;
 import com.mojang.datafixers.util.Either;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.world.inventory.ChestMenu;
 
-@Mod.EventBusSubscriber(modid = MemorialTitles.ID, value = Dist.CLIENT)
-public final class ClientRuntime {
+public final class ClientRuntime implements net.fabricmc.api.ClientModInitializer {
   public static final KeyMapping OPEN =
       new KeyMapping(
           "key.memorialtitles.open",
@@ -74,10 +66,8 @@ public final class ClientRuntime {
     return cn.pixelmc.memorialtitles.domain.Model.JSON.fromJson(data, type);
   }
 
-  @SubscribeEvent
-  public static void tick(TickEvent.ClientTickEvent e) {
+  public static void tick() {
     Minecraft mc = Minecraft.getInstance();
-    if (e.phase != TickEvent.Phase.END) return;
     AvatarCapture.tick(mc);
     if (mc.getConnection() == null) {
       WORN.clear();
@@ -94,100 +84,52 @@ public final class ClientRuntime {
     }
   }
 
-  @SubscribeEvent(priority = EventPriority.LOWEST)
-  public static void name(RenderNameTagEvent e) {
-    if (!head || e.getResult() == Event.Result.DENY || !(e.getEntity() instanceof Player p)) return;
-    if (HIDDEN_HEAD.contains(p.getUUID())) return;
+  public static void name(Player p, com.mojang.blaze3d.vertex.PoseStack pose,
+      net.minecraft.client.renderer.MultiBufferSource buffers, int light) {
+    if (!head || HIDDEN_HEAD.contains(p.getUUID())) return;
     RichText rich = WORN.get(p.getUUID());
     if (rich == null) return;
     Minecraft mc = Minecraft.getInstance();
-    try {
-      if (visible == null)
-        visible =
-            ObfuscationReflectionHelper.findMethod(EntityRenderer.class, "m_6512_", Entity.class);
-      if (!(boolean) visible.invoke(e.getEntityRenderer(), p)) return;
-    } catch (ReflectiveOperationException error) {
-      head = false;
-      com.mojang.logging.LogUtils.getLogger().error("MemorialTitles 头顶可见性适配失败，已停用该出口", error);
-      return;
-    }
-    if (!ForgeHooksClient.isNameplateInRenderDistance(
-        p, mc.getEntityRenderDispatcher().distanceToSqr(p))) return;
-    var pose = e.getPoseStack();
+    if (mc.getEntityRenderDispatcher().distanceToSqr(p) > 4096) return;
     var text = Text.render(rich);
     Font font = mc.font;
     boolean seeThrough = !p.isDiscrete();
-    float scoreboardOffset =
-        p.getScoreboard().getDisplayObjective(2) != null
-                && mc.getEntityRenderDispatcher().distanceToSqr(p) < 100
-            ? .25f
-            : 0;
+    float scoreboardOffset = p.getScoreboard().getDisplayObjective(net.minecraft.world.scores.DisplaySlot.BELOW_NAME) != null
+        && mc.getEntityRenderDispatcher().distanceToSqr(p) < 100 ? .25f : 0;
     pose.pushPose();
-    pose.translate(0, p.getNameTagOffsetY() + offset + scoreboardOffset, 0);
+    pose.translate(0, (p.getBbHeight() + .5f) + offset + scoreboardOffset, 0);
     pose.mulPose(mc.getEntityRenderDispatcher().cameraOrientation());
     pose.scale(-.025f * scale, -.025f * scale, .025f * scale);
     float x = -font.width(text) / 2f;
     int background = (int) (mc.options.getBackgroundOpacity(.25f) * 255) << 24;
-    font.drawInBatch(
-        text,
-        x,
-        0,
-        0x20ffffff,
-        false,
-        pose.last().pose(),
-        e.getMultiBufferSource(),
-        seeThrough ? Font.DisplayMode.SEE_THROUGH : Font.DisplayMode.NORMAL,
-        background,
-        e.getPackedLight());
-    if (seeThrough)
-      font.drawInBatch(
-          text,
-          x,
-          0,
-          -1,
-          false,
-          pose.last().pose(),
-          e.getMultiBufferSource(),
-          Font.DisplayMode.NORMAL,
-          0,
-          e.getPackedLight());
+    font.drawInBatch(text, x, 0, 0x20ffffff, false, pose.last().pose(), buffers,
+        seeThrough ? Font.DisplayMode.SEE_THROUGH : Font.DisplayMode.NORMAL, background, light);
+    if (seeThrough) font.drawInBatch(text, x, 0, -1, false, pose.last().pose(), buffers,
+        Font.DisplayMode.NORMAL, 0, light);
     pose.popPose();
   }
 
-  @SubscribeEvent(priority = EventPriority.LOWEST)
-  public static void chat(ClientChatReceivedEvent e) {
-    if (!chat || e.isSystem() || e.isCanceled()) return;
-    if (HIDDEN_CHAT.contains(e.getSender())) return;
-    RichText title = WORN.get(e.getSender());
-    if (title == null) return;
+  public static Component chat(Component message, UUID sender) {
+    if (!chat || HIDDEN_CHAT.contains(sender)) return message;
+    RichText title = WORN.get(sender);
+    if (title == null) return message;
     String[] parts = chatPrefix.split("\\{title}", -1);
     var prefix = Component.literal(parts[0]).append(Text.render(title));
     if (parts.length > 1) prefix.append(parts[1]);
-    // Prefix the decorated display, preserving the original signed message and sender.
-    e.setMessage(prefix.append(e.getMessage()));
+    return prefix.append(message);
   }
 
-  @SubscribeEvent(priority = EventPriority.LOWEST)
-  public static void menuTooltip(RenderTooltipEvent.GatherComponents event) {
-    Minecraft mc = Minecraft.getInstance();
-    if (!(mc.screen instanceof AbstractContainerScreen<?> screen)
-        || !(screen.getMenu() instanceof ChestMenu)) return;
-    MenuTooltips.ownLines(event.getItemStack()).ifPresent(lines -> {
-      event.getTooltipElements().clear();
-      lines.forEach(line -> event.getTooltipElements().add(Either.left(line)));
+  @Override public void onInitializeClient() {
+    net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper.registerKeyBinding(OPEN);
+    net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(mc -> tick());
+    net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(Network.Response.TYPE,
+        (payload, context) -> context.client().execute(() -> receive(payload.json())));
+    net.fabricmc.fabric.api.client.item.v1.ItemTooltipCallback.EVENT.register((stack, context, flag, lines) -> {
+      Minecraft mc = Minecraft.getInstance();
+      if (mc.screen instanceof AbstractContainerScreen<?> screen && screen.getMenu() instanceof ChestMenu)
+        MenuTooltips.ownLines(stack).ifPresent(own -> { lines.clear(); lines.addAll(own); });
     });
   }
 
-  @Mod.EventBusSubscriber(
-      modid = MemorialTitles.ID,
-      value = Dist.CLIENT,
-      bus = Mod.EventBusSubscriber.Bus.MOD)
-  public static final class Keys {
-    @SubscribeEvent
-    public static void register(RegisterKeyMappingsEvent e) {
-      e.register(OPEN);
-    }
-  }
-
-  private ClientRuntime() {}
+  public ClientRuntime() {}
 }
