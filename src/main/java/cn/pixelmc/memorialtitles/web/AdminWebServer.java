@@ -833,7 +833,7 @@ public final class AdminWebServer implements AutoCloseable {
         "managed",
         service.managed(),
         "version",
-        "0.5.0-dev");
+        "0.5.0-hub.2");
   }
 
   // Match the web console's pinyin/letter ordering, including natural numeric names.

@@ -68,6 +68,10 @@ public final class ChangeJournal {
           Map.entry("acquisition", "获取说明"),
           Map.entry("category", "分类"),
           Map.entry("order", "游戏内排序"),
+          Map.entry("presentation", "卡片样式"),
+          Map.entry("presentation.badge", "卡片徽章"),
+          Map.entry("presentation.rarity", "稀有度"),
+          Map.entry("presentation.theme", "卡片主题"),
           Map.entry("icon", "图标"),
           Map.entry("visible", "图鉴可见性"),
           Map.entry("issuable", "是否绝版"),
@@ -125,6 +129,9 @@ public final class ChangeJournal {
                 "icon",
                 "visible",
                 "issuable")) add(out, "T|" + id + "|" + field, before.get(field), after.get(field));
+        for (String field : List.of("badge", "rarity", "theme"))
+          add(out, "T|" + id + "|presentation." + field,
+              before.getAsJsonObject("presentation").get(field), after.getAsJsonObject("presentation").get(field));
       }
     }
     for (UUID id : union(a.players().keySet(), b.players().keySet()))
@@ -415,7 +422,9 @@ public final class ChangeJournal {
         Title t = s.titles().get(p[1]);
         yield t == null
             ? JsonNull.INSTANCE
-            : p.length == 2 ? json(t) : json(t).getAsJsonObject().get(p[2]);
+            : p.length == 2 ? json(t) : p[2].startsWith("presentation.")
+                ? json(t).getAsJsonObject().getAsJsonObject("presentation").get(p[2].substring(13))
+                : json(t).getAsJsonObject().get(p[2]);
       }
       case "P" -> json(s.players().get(UUID.fromString(p[1])));
       case "D" -> {
@@ -469,7 +478,8 @@ public final class ChangeJournal {
             Title old = ts.get(p[1]);
             if (old == null) throw new IllegalStateException("相关称号已经不存在");
             JsonObject j = json(old).getAsJsonObject();
-            j.add(p[2], v);
+            if (p[2].startsWith("presentation.")) j.getAsJsonObject("presentation").add(p[2].substring(13), v);
+            else j.add(p[2], v);
             ts.put(p[1], JSON.fromJson(j, Title.class).revised(old.revision() + 1));
           }
         }

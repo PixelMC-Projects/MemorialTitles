@@ -35,7 +35,7 @@ public final class RemoteGateway {
     try {
       Class<?> api = Class.forName("com.pixelmc.pixelmcmanager.api.ManagerBridgeApi");
       api.getMethod("register", String.class, String.class, String.class, String.class)
-          .invoke(null, "memorialtitles", "MemorialTitles", "0.5.0-dev", "称号档案,玩家收藏,首登奖励,操作记录");
+          .invoke(null, "memorialtitles", "MemorialTitles", "0.5.0-hub.2", "称号档案,玩家收藏,首登奖励,操作记录");
       api.getMethod("registerStorage", String.class, String.class)
           .invoke(
               null,
