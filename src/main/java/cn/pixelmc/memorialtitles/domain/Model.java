@@ -2,12 +2,31 @@ package cn.pixelmc.memorialtitles.domain;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonDeserializer;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import java.util.*;
 
 /** Platform-independent data. All offsets are visible Unicode code-point offsets, zero-based. */
 public final class Model {
   public static final Gson JSON =
-      new GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create();
+      new GsonBuilder().disableHtmlEscaping().setPrettyPrinting()
+          // Validate before Gson's reflective record constructor can wrap a useful edit error.
+          .registerTypeAdapter(Presentation.class, (JsonDeserializer<Presentation>) (json, type, context) -> {
+            if (!json.isJsonObject()) throw new IllegalArgumentException("称号卡片样式须为对象");
+            JsonObject value = json.getAsJsonObject();
+            if (!Set.of("badge", "rarity", "theme").containsAll(value.keySet()))
+              throw new IllegalArgumentException("称号卡片样式包含未知字段");
+            return new Presentation(preset(value, "badge", "leaf"), preset(value, "rarity", "none"), preset(value, "theme", "slate"));
+          }).create();
+
+  private static String preset(JsonObject object, String field, String fallback) {
+    JsonElement value = object.get(field);
+    if (value == null || value.isJsonNull()) return fallback;
+    if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString())
+      throw new IllegalArgumentException("称号卡片预设须为文字");
+    return value.getAsString();
+  }
 
   public record Segment(
       String text, int color, boolean bold, boolean italic, boolean underline, boolean strike) {
@@ -93,88 +112,49 @@ public final class Model {
     }
   }
 
-  public record Title(
-      String id,
-      RichText name,
-      String description,
-      String source,
-      String acquisition,
-      String category,
-      int order,
-      int icon,
-      boolean visible,
-      boolean issuable,
-      long revision,
-      long createdAt) {
-    public Title(
-        String id,
-        RichText name,
-        String description,
-        String source,
-        String acquisition,
-        String category,
-        int order,
-        int icon,
-        boolean visible,
-        boolean issuable,
-        long revision) {
-      this(
-          id,
-          name,
-          description,
-          source,
-          acquisition,
-          category,
-          order,
-          icon,
-          visible,
-          issuable,
-          revision,
-          0);
+  /** Visual metadata only; the integer icon remains resource-pack CustomModelData. */
+  public record Presentation(String badge, String rarity, String theme) {
+    public Presentation {
+      badge = badge == null ? "leaf" : badge;
+      rarity = rarity == null ? "none" : rarity;
+      theme = theme == null ? "slate" : theme;
+      TitlePresentation.validate(badge, rarity, theme);
     }
+    public static Presentation defaults() { return new Presentation("leaf", "none", "slate"); }
+  }
 
+  public record Title(
+      String id, RichText name, String description, String source, String acquisition,
+      String category, int order, int icon, boolean visible, boolean issuable,
+      long revision, long createdAt, Presentation presentation) {
+    // Compatibility constructors preserve callers and old JSON/backup records.
+    public Title(String id, RichText name, String description, String source, String acquisition,
+        String category, int order, int icon, boolean visible, boolean issuable, long revision) {
+      this(id, name, description, source, acquisition, category, order, icon, visible, issuable,
+          revision, 0, Presentation.defaults());
+    }
+    public Title(String id, RichText name, String description, String source, String acquisition,
+        String category, int order, int icon, boolean visible, boolean issuable,
+        long revision, long createdAt) {
+      this(id, name, description, source, acquisition, category, order, icon, visible, issuable,
+          revision, createdAt, Presentation.defaults());
+    }
     public Title {
       if (id == null || !id.matches("[a-z0-9][a-z0-9_.-]{0,63}"))
         throw new IllegalArgumentException("ID 仅允许小写字母、数字、_.-，最多64字");
       Objects.requireNonNull(name);
-      check(description, 2048);
-      check(source, 256);
-      check(acquisition, 512);
-      check(category, 128);
+      check(description, 2048); check(source, 256); check(acquisition, 512); check(category, 128);
       if (icon < 0) throw new IllegalArgumentException("图标编号不可为负");
       if (createdAt < 0) throw new IllegalArgumentException("创建日期无效");
+      presentation = presentation == null ? Presentation.defaults() : presentation;
     }
-
     public Title revised(long value) {
-      return new Title(
-          id,
-          name,
-          description,
-          source,
-          acquisition,
-          category,
-          order,
-          icon,
-          visible,
-          issuable,
-          value,
-          createdAt);
+      return new Title(id, name, description, source, acquisition, category, order, icon,
+          visible, issuable, value, createdAt, presentation);
     }
-
     public Title created(long value) {
-      return new Title(
-          id,
-          name,
-          description,
-          source,
-          acquisition,
-          category,
-          order,
-          icon,
-          visible,
-          issuable,
-          revision,
-          value);
+      return new Title(id, name, description, source, acquisition, category, order, icon,
+          visible, issuable, revision, value, presentation);
     }
   }
 

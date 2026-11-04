@@ -46,7 +46,7 @@ public final class ReminderIntegrationSuite {
     DisplayPreferences oldPreference = JSON.fromJson("{head:false,chat:true,tab:false}", DisplayPreferences.class);
     check(oldPreference.reminderEnabled(), "missing old JSON field defaults to reminder enabled");
     var text = Text.unequippedReminder();
-    check(text.getString().equals("您似乎还没有配置一个用于展示的称号,使用/mt打开个人称号面板,输入/mt reminder off以永久关闭该提示"), "reminder has the requested text and concrete permanent-off command");
+    check(text.getString().equals("您似乎还没有配置一个用于展示的称号,使用/mt打开个人称号面板\n输入/mt reminder off以永久关闭该提示"), "reminder has the requested text and concrete permanent-off command");
     check(text.getStyle().getColor().getValue() == 0xf2c66d
         && text.getSiblings().get(1).getStyle().getColor().getValue() == 0x5dd4ed
         && text.getSiblings().get(3).getStyle().getColor().getValue() == 0x5dd4ed

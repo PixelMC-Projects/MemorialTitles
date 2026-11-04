@@ -33,7 +33,7 @@ public final class Text {
     return reminderPart("您似乎还没有配置一个用于展示的称号,", 0xf2c66d)
         .append(reminderPart("使用", 0xb6c4d7))
         .append(reminderPart("/mt", 0x5dd4ed))
-        .append(reminderPart("打开个人称号面板,输入", 0xb6c4d7))
+        .append(reminderPart("打开个人称号面板\n输入", 0xb6c4d7))
         .append(reminderPart("/mt reminder off", 0x5dd4ed))
         .append(reminderPart("以永久关闭该提示", 0x80caa2));
   }
