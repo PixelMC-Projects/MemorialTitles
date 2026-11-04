@@ -1,5 +1,5 @@
 plugins { id 'fabric-loom' version '1.7.4' }
-version = '0.5.0-dev'
+version = '0.5.0-hub.2'
 group = 'cn.pixelmc.memorialtitles'
 base { archivesName = 'memorialtitles-fabric-1.20.1' }
 java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
@@ -205,4 +205,17 @@ tasks.named('runPackagedSmokeClient').configure {
   if (!report.exists() || !new groovy.json.JsonSlurper().parse(report).passed)
    throw new GradleException('Packaged Fabric client smoke did not pass')
  }
+}
+
+// The web editor and player API resolve one canonical restrained preset palette.
+tasks.named('processResources').configure { from('web-console/src/titlePresentationPresets.json') }
+tasks.register('playerHubTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.PlayerHubSuite'
+}
+tasks.register('playerHubIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.PlayerHubIntegrationSuite'
 }

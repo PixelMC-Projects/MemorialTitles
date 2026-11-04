@@ -55,6 +55,12 @@ public final class TitleService implements AutoCloseable {
   private volatile Function<JsonObject, JsonObject> platform;
   private volatile Map<UUID, Profile> directory = Map.of();
   private volatile long directoryExpires;
+  private volatile Predicate<UUID> hubAdmission = id -> false;
+
+  /** Runtime binds its admitted online-session set; queued writes recheck inside the transaction. */
+  public void attachHubAdmission(Predicate<UUID> value) {
+    hubAdmission = Objects.requireNonNull(value);
+  }
 
   /** Binds the Manager-owned identity directory; null preserves standalone operation. */
   public void attachPlatform(Function<JsonObject, JsonObject> value) {
@@ -554,6 +560,67 @@ public final class TitleService implements AutoCloseable {
           tx.audit(id.toString(), "EQUIP", id.toString(), title, "");
           return null;
         });
+  }
+
+  /** Safe own-player RPC, including managed transport; never returns a raw Snapshot. */
+  public CompletableFuture<JsonObject> playerHub(UUID player, String action, JsonObject payload) {
+    try {
+      Objects.requireNonNull(player, "缺少玩家身份");
+      Objects.requireNonNull(payload, "缺少称号请求");
+      PlayerHubView.validate(action, payload);
+      if (!hubAdmission.test(player)) throw new SecurityException("玩家会话已失效，请重新打开");
+    } catch (RuntimeException error) { return CompletableFuture.failedFuture(error); }
+    if (remote != null) return remoteCall("playerHub", JsonObject.class, player, action, payload);
+    return write(tx -> {
+      if (!hubAdmission.test(player)) throw new SecurityException("玩家会话已失效，请重新打开");
+      if (managed()) {
+        JsonObject context = platform("profiles.loginContext", player);
+        if (!context.has("admitted") || !context.get("admitted").getAsBoolean())
+          throw new SecurityException("玩家尚未通过 Manager 的真实登录校验");
+      }
+      Snapshot state = tx.snapshot();
+      if (managed()) globalProfile(player);
+      else if (!state.players().containsKey(player)) throw new SecurityException("称号玩家资料尚未就绪，请稍后重试");
+      if (!Set.of("snapshot", "catalogue").contains(action)) {
+        if (!PlayerHubView.revision(state, player).equals(PlayerHubView.string(payload, "expectedRevision", 64)))
+          throw new IllegalStateException("称号资料已更新，请重新载入后操作");
+        known(tx, state, player);
+      }
+      switch (action) {
+        case "equip" -> {
+          String title = PlayerHubView.string(payload, "title", 64);
+          if (!title.isEmpty()) owned(state, player, title); // Retired-but-owned remains equippable.
+          if (!Objects.equals(state.equipped().getOrDefault(player, ""), title)) {
+            if (title.isEmpty()) tx.sql("DELETE FROM mt_equipped WHERE player=?", player.toString());
+            else tx.sql("INSERT INTO mt_equipped(player,title) VALUES(?,?) ON DUPLICATE KEY UPDATE title=VALUES(title)", player.toString(), title);
+            tx.audit(player.toString(), "EQUIP", player.toString(), title, "");
+          }
+        }
+        case "visibility" -> {
+          String title = state.equipped().get(player);
+          if (title == null) throw new IllegalStateException("请先佩戴一个称号");
+          Owned owned = owned(state, player, title);
+          boolean visible = PlayerHubView.bool(payload, "visible");
+          if (owned.publicDisplay() != visible) {
+            tx.sql("UPDATE mt_owned SET display_public=? WHERE player=? AND title=?", visible, player.toString(), title);
+            tx.audit(player.toString(), "PRIVACY", player.toString(), title, owned.publicCollection() + "/" + visible);
+          }
+        }
+        case "displayPreferences" -> {
+          DisplayPreferences before = state.displayPreferences(player);
+          DisplayPreferences after = new DisplayPreferences(PlayerHubView.bool(payload, "head"),
+              PlayerHubView.bool(payload, "chat"), PlayerHubView.bool(payload, "tab"), before.reminderDisabled());
+          if (!before.equals(after)) {
+            tx.displayPreferences(player, after);
+            tx.audit(player.toString(), "DISPLAY_POSITION", player.toString(), "", "head=" + after.head() + ",chat=" + after.chat() + ",tab=" + after.tab());
+          }
+        }
+        default -> { /* snapshot/catalogue validated above; read only */ }
+      }
+      String cursor = action.equals("catalogue") ? PlayerHubView.string(payload, "cursor", 96) : null;
+      int limit = action.equals("catalogue") ? payload.get("limit").getAsInt() : PlayerHubView.PAGE_SIZE;
+      return PlayerHubView.page(tx.snapshot(), player, cursor, limit);
+    });
   }
 
   public CompletableFuture<Void> privacy(

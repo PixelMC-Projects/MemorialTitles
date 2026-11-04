@@ -55,6 +55,8 @@ public final class ServerRuntime {
       files = new ServerFiles(server.getServerDirectory().toPath().toAbsolutePath());
       service = files.config.remote() ? TitleService.remoteService() : new TitleService(new Database(files.config.database()));
       MemorialTitlesApi.attach(service);
+      cn.pixelmc.memorialtitles.api.PlayerHubApi.attach(service,
+          id -> online.contains(id) && (!service.remote() || RemoteGateway.admitted(id)));
       service.listen(
           s ->
               server.execute(
@@ -125,6 +127,7 @@ public final class ServerRuntime {
     if (web != null) web.close();
     if (service != null) service.close();
     MemorialTitlesApi.attach(null);
+    cn.pixelmc.memorialtitles.api.PlayerHubApi.attach(null, null);
     current = null;
   }
 

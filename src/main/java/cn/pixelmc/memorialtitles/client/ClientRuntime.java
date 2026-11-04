@@ -50,6 +50,7 @@ public final class ClientRuntime implements net.fabricmc.api.ClientModInitialize
           if (row.head()) HIDDEN_HEAD.remove(row.player()); else HIDDEN_HEAD.add(row.player());
           if (row.chat()) HIDDEN_CHAT.remove(row.player()); else HIDDEN_CHAT.add(row.player());
         }
+        if (page.reset()) notifyPlayerHubTitlesChanged();
       }
       case "avatarRequest" -> AvatarCapture.request(data.getAsString());
       case "adminOpen" -> mc.setScreen(new AdminScreen());
@@ -59,6 +60,16 @@ public final class ClientRuntime implements net.fabricmc.api.ClientModInitialize
         else if (mc.player != null && (kind.equals("error") || kind.equals("ok")))
           mc.player.sendSystemMessage(Component.literal(data.getAsString()));
       }
+    }
+  }
+
+  /** Existing display sync invalidates the optional Hub; no payload or hard dependency. */
+  private static void notifyPlayerHubTitlesChanged() {
+    try {
+      Class.forName("com.pixelmc.hub.client.ClientHubSession")
+          .getMethod("titlesChanged").invoke(null);
+    } catch (ReflectiveOperationException | LinkageError ignored) {
+      // Absent or older optional Hub must never interrupt normal title rendering.
     }
   }
 

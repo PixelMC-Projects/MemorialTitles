@@ -212,7 +212,9 @@ public final class Commands {
                                           old == null ? 0 : old.icon(),
                                           old == null || old.visible(),
                                           old == null || old.issuable(),
-                                          old == null ? 0 : old.revision());
+                                          old == null ? 0 : old.revision(),
+                                          old == null ? 0 : old.createdAt(),
+                                          old == null ? Presentation.defaults() : old.presentation());
                                   return save(c, t);
                                 }))));
     root.then(

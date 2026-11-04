@@ -568,7 +568,7 @@ public final class AdminScreen extends Screen {
             t.icon(),
             visible,
             issuable,
-            t.revision());
+            t.revision(), t.createdAt(), t.presentation());
   }
 
   private void capture() {
@@ -604,7 +604,7 @@ public final class AdminScreen extends Screen {
             Integer.parseInt(value("icon", Integer.toString(old.icon()))),
             visible,
             issuable,
-            old.revision());
+            old.revision(), old.createdAt(), old.presentation());
     dirty = dirty || !old.equals(editing);
   }
 
