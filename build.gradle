@@ -7,7 +7,7 @@ buildscript {
     dependencies { classpath 'net.minecraftforge.gradle:ForgeGradle:6.0.54' }
 }
 apply plugin: 'net.minecraftforge.gradle'
-version = '0.5.0-dev'
+version = '0.5.0-hub.2'
 group = 'cn.pixelmc.memorialtitles'
 base { archivesName = 'memorialtitles-forge-1.20.1' }
 java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
@@ -230,4 +230,17 @@ tasks.register('unifiedPlatformIntegrationTest', JavaExec) {
     dependsOn 'integrationClasses'
     classpath = sourceSets.integration.runtimeClasspath
     mainClass = 'cn.pixelmc.memorialtitles.UnifiedPlatformIntegrationSuite'
+}
+
+// The web editor and player API resolve one canonical restrained preset palette.
+tasks.named('processResources').configure { from('web-console/src/titlePresentationPresets.json') }
+tasks.register('playerHubTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.PlayerHubSuite'
+}
+tasks.register('playerHubIntegrationTest', JavaExec) {
+    dependsOn 'integrationClasses'
+    classpath = sourceSets.integration.runtimeClasspath
+    mainClass = 'cn.pixelmc.memorialtitles.PlayerHubIntegrationSuite'
 }
